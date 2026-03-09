@@ -47,8 +47,20 @@ def _get_icon_path() -> Path:
     return base / "assets" / "icon.png"
 
 
+def _setup_ssl_certs() -> None:
+    """Set SSL_CERT_FILE early so all libraries find certs in frozen builds."""
+    import os
+    if getattr(sys, "frozen", False) and not os.environ.get("SSL_CERT_FILE"):
+        try:
+            import certifi
+            os.environ["SSL_CERT_FILE"] = certifi.where()
+        except ImportError:
+            pass
+
+
 def main():
     multiprocessing.freeze_support()
+    _setup_ssl_certs()
     _configure_logging()
     _install_exception_hook()
     app = QApplication(sys.argv)

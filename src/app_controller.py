@@ -26,16 +26,23 @@ logger = logging.getLogger(__name__)
 _STRUCTURED_EXTS = {".csv", ".xlsx"}
 
 
-def _setup_ssl_certs() -> None:
-    """Set SSL_CERT_FILE so urllib/requests can verify HTTPS in frozen apps."""
-    import os
-    if os.environ.get("SSL_CERT_FILE"):
-        return
+def _make_ssl_context():
+    """Create an SSL context that works in frozen PyInstaller builds.
+
+    Bundled Python can't find the system certificate store, so we use
+    certifi's CA bundle explicitly.
+    """
+    import ssl
     try:
         import certifi
-        os.environ["SSL_CERT_FILE"] = certifi.where()
+        return ssl.create_default_context(cafile=certifi.where())
     except ImportError:
-        pass
+        return ssl.create_default_context()
+
+
+def _urlopen(url: str):
+    """urlopen wrapper that uses our SSL context."""
+    return urllib.request.urlopen(url, context=_make_ssl_context())
 
 
 def _download_spacy_model(model_name: str, target_dir: Path) -> None:
@@ -46,9 +53,10 @@ def _download_spacy_model(model_name: str, target_dir: Path) -> None:
     importable once *target_dir* is on ``sys.path``.
     """
     target_dir.mkdir(parents=True, exist_ok=True)
-    _setup_ssl_certs()
 
     # Resolve the compatible model version via spaCy's own machinery.
+    # Note: get_compatibility() also makes HTTPS requests internally,
+    # so we fall back to guessing the version if it fails.
     try:
         from spacy.cli.download import get_compatibility, get_version
         compat = get_compatibility()
@@ -67,7 +75,15 @@ def _download_spacy_model(model_name: str, target_dir: Path) -> None:
 
     logger.info("Downloading %s from %s", model_name, url)
     whl_path = target_dir / whl_name
-    urllib.request.urlretrieve(url, whl_path)
+
+    # Use explicit SSL context — urlretrieve doesn't support this,
+    # so we use urlopen + manual file write instead.
+    with _urlopen(url) as resp, open(whl_path, "wb") as f:
+        while True:
+            chunk = resp.read(1024 * 1024)
+            if not chunk:
+                break
+            f.write(chunk)
 
     with zipfile.ZipFile(whl_path) as zf:
         zf.extractall(target_dir)

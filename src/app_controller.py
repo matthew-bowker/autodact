@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
+import sys
+import urllib.request
+import zipfile
 from pathlib import Path
 
-from PyQt6.QtCore import QThread
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtCore import Qt, QThread
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from src.config import AppConfig
+from src.config import AppConfig, get_app_data_dir
 from src.pipeline.llm_detector import LLMDetector
 from src.pipeline.llm_engine import LLMEngine
 from src.pipeline.lookup_table import LookupTable
@@ -21,6 +24,47 @@ from src.workers.processing_worker import ProcessingWorker
 logger = logging.getLogger(__name__)
 
 _STRUCTURED_EXTS = {".csv", ".xlsx"}
+
+
+def _download_spacy_model(model_name: str, target_dir: Path) -> None:
+    """Download a spaCy model wheel from GitHub and extract it.
+
+    Used in frozen PyInstaller builds where pip is not available.
+    After extraction the model package lives in *target_dir* and is
+    importable once *target_dir* is on ``sys.path``.
+    """
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve the compatible model version via spaCy's own machinery.
+    try:
+        from spacy.cli.download import get_compatibility, get_version
+        compat = get_compatibility()
+        version = get_version(model_name, compat)
+    except Exception:
+        # Fallback: guess from spaCy's minor version (usually correct).
+        import spacy
+        minor = ".".join(spacy.__version__.split(".")[:2])
+        version = f"{minor}.0"
+
+    whl_name = f"{model_name}-{version}-py3-none-any.whl"
+    url = (
+        f"https://github.com/explosion/spacy-models/releases/download/"
+        f"{model_name}-{version}/{whl_name}"
+    )
+
+    logger.info("Downloading %s from %s", model_name, url)
+    whl_path = target_dir / whl_name
+    urllib.request.urlretrieve(url, whl_path)
+
+    with zipfile.ZipFile(whl_path) as zf:
+        zf.extractall(target_dir)
+
+    whl_path.unlink()
+
+    if str(target_dir) not in sys.path:
+        sys.path.insert(0, str(target_dir))
+
+    logger.info("spaCy model %s installed to %s", model_name, target_dir)
 
 
 class AppController:
@@ -146,7 +190,24 @@ class AppController:
         """Download the spaCy model if it is not already installed."""
         import spacy.util
 
-        if not spacy.util.is_package(model_name):
+        # Make previously-downloaded models discoverable via sys.path.
+        spacy_dir = get_app_data_dir() / "spacy_models"
+        if spacy_dir.exists() and str(spacy_dir) not in sys.path:
+            sys.path.insert(0, str(spacy_dir))
+
+        if spacy.util.is_package(model_name):
+            return
+
+        if getattr(sys, "frozen", False):
+            # Frozen PyInstaller app — pip is not available, download
+            # the model wheel directly from GitHub and extract it.
+            logger.info("Downloading spaCy model %s (frozen mode) ...", model_name)
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                _download_spacy_model(model_name, spacy_dir)
+            finally:
+                QApplication.restoreOverrideCursor()
+        else:
             logger.info("Downloading spaCy model %s ...", model_name)
             from spacy.cli import download
 

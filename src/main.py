@@ -1,13 +1,27 @@
 import logging
 import logging.handlers
+import multiprocessing
 import sys
 from pathlib import Path
 
+import traceback
+
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from src.config import AppConfig, get_app_data_dir
 from src.ui.main_window import MainWindow
+
+logger = logging.getLogger(__name__)
+
+
+def _install_exception_hook() -> None:
+    """Prevent PyQt6 from calling abort() on unhandled Python exceptions."""
+    def _hook(exc_type, exc_value, exc_tb):
+        msg = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        logger.error("Unhandled exception:\n%s", msg)
+        QMessageBox.critical(None, "Error", f"An unexpected error occurred:\n\n{msg}")
+    sys.excepthook = _hook
 
 
 def _configure_logging() -> None:
@@ -34,7 +48,9 @@ def _get_icon_path() -> Path:
 
 
 def main():
+    multiprocessing.freeze_support()
     _configure_logging()
+    _install_exception_hook()
     app = QApplication(sys.argv)
     app.setApplicationName("Autodact")
 

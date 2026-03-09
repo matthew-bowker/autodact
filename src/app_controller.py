@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import logging
-import sys
-import urllib.request
-import zipfile
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QThread
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtCore import QThread
+from PyQt6.QtWidgets import QMessageBox
 
-from src.config import AppConfig, get_app_data_dir
+from src.config import AppConfig
 from src.pipeline.llm_detector import LLMDetector
 from src.pipeline.llm_engine import LLMEngine
 from src.pipeline.lookup_table import LookupTable
@@ -20,80 +17,11 @@ from src.session.session_manager import SessionManager
 from src.ui.main_window import MainWindow
 from src.workers.model_load_worker import ModelLoadWorker
 from src.workers.processing_worker import ProcessingWorker
+from src.workers.spacy_setup_worker import SpacySetupWorker
 
 logger = logging.getLogger(__name__)
 
 _STRUCTURED_EXTS = {".csv", ".xlsx"}
-
-
-def _make_ssl_context():
-    """Create an SSL context that works in frozen PyInstaller builds.
-
-    Bundled Python can't find the system certificate store, so we use
-    certifi's CA bundle explicitly.
-    """
-    import ssl
-    try:
-        import certifi
-        return ssl.create_default_context(cafile=certifi.where())
-    except ImportError:
-        return ssl.create_default_context()
-
-
-def _urlopen(url: str):
-    """urlopen wrapper that uses our SSL context."""
-    return urllib.request.urlopen(url, context=_make_ssl_context())
-
-
-def _download_spacy_model(model_name: str, target_dir: Path) -> None:
-    """Download a spaCy model wheel from GitHub and extract it.
-
-    Used in frozen PyInstaller builds where pip is not available.
-    After extraction the model package lives in *target_dir* and is
-    importable once *target_dir* is on ``sys.path``.
-    """
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    # Resolve the compatible model version via spaCy's own machinery.
-    # Note: get_compatibility() also makes HTTPS requests internally,
-    # so we fall back to guessing the version if it fails.
-    try:
-        from spacy.cli.download import get_compatibility, get_version
-        compat = get_compatibility()
-        version = get_version(model_name, compat)
-    except Exception:
-        # Fallback: guess from spaCy's minor version (usually correct).
-        import spacy
-        minor = ".".join(spacy.__version__.split(".")[:2])
-        version = f"{minor}.0"
-
-    whl_name = f"{model_name}-{version}-py3-none-any.whl"
-    url = (
-        f"https://github.com/explosion/spacy-models/releases/download/"
-        f"{model_name}-{version}/{whl_name}"
-    )
-
-    logger.info("Downloading %s from %s", model_name, url)
-    whl_path = target_dir / whl_name
-
-    # Use explicit SSL context — urlretrieve doesn't support this,
-    # so we use urlopen + manual file write instead.
-    with _urlopen(url) as resp, open(whl_path, "wb") as f:
-        while True:
-            chunk = resp.read(1024 * 1024)
-            if not chunk:
-                break
-            f.write(chunk)
-
-    with zipfile.ZipFile(whl_path) as zf:
-        zf.extractall(target_dir)
-
-    whl_path.unlink()
-
-    if str(target_dir) not in sys.path:
-        sys.path.insert(0, str(target_dir))
-
-    logger.info("spaCy model %s installed to %s", model_name, target_dir)
 
 
 class AppController:
@@ -175,10 +103,9 @@ class AppController:
         # Presidio always detects all entity types (emails, phones, IPs, etc.)
         # regardless of the LLM category checkboxes.
         if self._presidio is None:
-            self._ensure_spacy_model()
-            self._presidio = PresidioDetector()
-
-        if self._llm_engine is None:
+            self._pending_model_path = str(model_path)
+            self._setup_spacy_then_continue()
+        elif self._llm_engine is None:
             self._load_model_then_process(str(model_path))
         else:
             self._start_processing()
@@ -214,33 +141,38 @@ class AppController:
     # spaCy / Presidio setup
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _ensure_spacy_model(model_name: str = "en_core_web_lg") -> None:
-        """Download the spaCy model if it is not already installed."""
-        import spacy.util
+    def _setup_spacy_then_continue(self) -> None:
+        """Download spaCy model + create PresidioDetector on a background thread."""
+        self._window.set_processing_state(True)
+        self._window.set_progress("Setting up NER engine", 0, 1)
 
-        # Make previously-downloaded models discoverable via sys.path.
-        spacy_dir = get_app_data_dir() / "spacy_models"
-        if spacy_dir.exists() and str(spacy_dir) not in sys.path:
-            sys.path.insert(0, str(spacy_dir))
+        self._spacy_thread = QThread()
+        self._spacy_worker = SpacySetupWorker()
+        self._spacy_worker.moveToThread(self._spacy_thread)
 
-        if spacy.util.is_package(model_name):
-            return
+        self._spacy_thread.started.connect(self._spacy_worker.run)
+        self._spacy_worker.finished.connect(self._on_spacy_setup_finished)
+        self._spacy_worker.error.connect(self._on_spacy_setup_error)
+        self._spacy_worker.finished.connect(self._spacy_thread.quit)
+        self._spacy_worker.error.connect(self._spacy_thread.quit)
 
-        if getattr(sys, "frozen", False):
-            # Frozen PyInstaller app — pip is not available, download
-            # the model wheel directly from GitHub and extract it.
-            logger.info("Downloading spaCy model %s (frozen mode) ...", model_name)
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            try:
-                _download_spacy_model(model_name, spacy_dir)
-            finally:
-                QApplication.restoreOverrideCursor()
+        self._spacy_thread.start()
+
+    def _on_spacy_setup_finished(self, presidio: PresidioDetector) -> None:
+        self._presidio = presidio
+        model_path = self._pending_model_path
+        self._pending_model_path = None
+        if self._llm_engine is None:
+            self._load_model_then_process(model_path)
         else:
-            logger.info("Downloading spaCy model %s ...", model_name)
-            from spacy.cli import download
+            self._start_processing()
 
-            download(model_name)
+    def _on_spacy_setup_error(self, message: str) -> None:
+        self._window.set_processing_state(False)
+        QMessageBox.critical(
+            self._window, "NER Setup Error",
+            f"Failed to set up spaCy / Presidio:\n{message}"
+        )
 
     # ------------------------------------------------------------------
     # LLM model loading

@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autodact"
+dynamic = ["version"]
+description = "Privacy-first desktop app for anonymising PII in documents using local AI"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Matthew Bowker" },
+]
+dependencies = [
+    "PyQt6>=6.6",
+    "llama-cpp-python>=0.2.0",
+    "openpyxl>=3.1",
+    "python-docx>=1.1",
+    "huggingface-hub>=0.20",
+    "json-repair>=0.30",
+    "presidio-analyzer>=2.2",
+    "spacy>=3.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pyinstaller>=6.0",
+]
+
+[project.gui-scripts]
+autodact = "src.main:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "src.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.setuptools.package-data]
+"src.pipeline" = ["data/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

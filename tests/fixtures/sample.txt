@@ -1,0 +1,5 @@
+Jane Smith works at Acme Corp in Manchester.
+Her email is jane.smith@acme.com and her phone is +44 7700 900123.
+She was born on 15/03/1990 and lives at M1 2AB.
+Bob Jones is her colleague at Acme Corp.
+He can be reached at bob.jones@acme.com.

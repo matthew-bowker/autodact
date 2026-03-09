@@ -1,0 +1,65 @@
+name: Build Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Build with PyInstaller
+        run: pyinstaller autodact_macos.spec
+
+      - name: Ad-hoc code sign
+        run: codesign --force --deep --sign - dist/Autodact.app
+
+      - name: Create DMG
+        run: |
+          hdiutil create \
+            -volname Autodact \
+            -srcfolder dist/Autodact.app \
+            -ov -format UDZO \
+            dist/Autodact-macOS.dmg
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Autodact-macOS.dmg
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Build with PyInstaller
+        run: pyinstaller autodact_windows.spec
+
+      - name: Create zip
+        run: Compress-Archive -Path dist\Autodact -DestinationPath dist\Autodact-Windows.zip
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Autodact-Windows.zip

@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# Virtual environment
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# macOS
+.DS_Store
+
+# Output files
+*_anon.*
+*_lookup.csv
+
+# Root-level test outputs
+sample_chunky*
+
+# Build artifacts
+dist/
+build/
+*.dmg

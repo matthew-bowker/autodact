@@ -20,6 +20,8 @@ jobs:
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
+        env:
+          CMAKE_ARGS: "-DGGML_NATIVE=OFF"
 
       - name: Build with PyInstaller
         run: pyinstaller autodact_macos.spec

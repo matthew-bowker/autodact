@@ -24,6 +24,9 @@ jobs:
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
+        env:
+          # Disable i8mm on macOS ARM to avoid llama-cpp-python build errors
+          CMAKE_ARGS: "-DGGML_NATIVE=OFF"
 
       - name: Run tests
         run: pytest tests/ -v --tb=short

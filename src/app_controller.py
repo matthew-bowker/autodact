@@ -26,6 +26,18 @@ logger = logging.getLogger(__name__)
 _STRUCTURED_EXTS = {".csv", ".xlsx"}
 
 
+def _setup_ssl_certs() -> None:
+    """Set SSL_CERT_FILE so urllib/requests can verify HTTPS in frozen apps."""
+    import os
+    if os.environ.get("SSL_CERT_FILE"):
+        return
+    try:
+        import certifi
+        os.environ["SSL_CERT_FILE"] = certifi.where()
+    except ImportError:
+        pass
+
+
 def _download_spacy_model(model_name: str, target_dir: Path) -> None:
     """Download a spaCy model wheel from GitHub and extract it.
 
@@ -34,6 +46,7 @@ def _download_spacy_model(model_name: str, target_dir: Path) -> None:
     importable once *target_dir* is on ``sys.path``.
     """
     target_dir.mkdir(parents=True, exist_ok=True)
+    _setup_ssl_certs()
 
     # Resolve the compatible model version via spaCy's own machinery.
     try:

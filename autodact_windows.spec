@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec for Windows executable."""
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all
 
 # Aggressively collect spaCy/thinc/presidio — their plugin systems
 # use dynamic imports that PyInstaller cannot trace statically.
@@ -42,7 +42,6 @@ a = Analysis(
         *thinc_hiddenimports,
         *presidio_hiddenimports,
         *llama_hiddenimports,
-        *collect_submodules("llama_cpp"),
     ],
     noarchive=False,
 )

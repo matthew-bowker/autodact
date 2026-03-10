@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec for macOS .app bundle."""
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all
 
 # Aggressively collect spaCy/thinc/presidio — their plugin systems
 # use dynamic imports that PyInstaller cannot trace statically.
@@ -10,6 +10,7 @@ thinc_datas, thinc_binaries, thinc_hiddenimports = collect_all("thinc")
 presidio_datas, presidio_binaries, presidio_hiddenimports = collect_all(
     "presidio_analyzer"
 )
+llama_datas, llama_binaries, llama_hiddenimports = collect_all("llama_cpp")
 
 a = Analysis(
     ["src/main.py"],
@@ -20,11 +21,13 @@ a = Analysis(
         *spacy_datas,
         *thinc_datas,
         *presidio_datas,
+        *llama_datas,
     ],
     binaries=[
         *spacy_binaries,
         *thinc_binaries,
         *presidio_binaries,
+        *llama_binaries,
     ],
     hiddenimports=[
         "PyQt6.QtSvg",
@@ -38,7 +41,7 @@ a = Analysis(
         *spacy_hiddenimports,
         *thinc_hiddenimports,
         *presidio_hiddenimports,
-        *collect_submodules("llama_cpp"),
+        *llama_hiddenimports,
     ],
     noarchive=False,
 )

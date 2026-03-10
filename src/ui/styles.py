@@ -63,8 +63,9 @@ def panel_style() -> str:
     return (
         f"QGroupBox {{ "
         f"border: 1px solid {BORDER_LIGHT}; border-radius: {RADIUS_MD}px; "
-        f"margin-top: 12px; padding-top: 16px; background-color: {BACKGROUND_PANEL}; }} "
+        f"margin-top: 20px; padding-top: 20px; background-color: {BACKGROUND_PANEL}; }} "
         f"QGroupBox::title {{ "
         f"subcontrol-origin: margin; subcontrol-position: top left; "
-        f"left: 12px; padding: 0 4px; color: {TEXT_PRIMARY}; font-weight: bold; }}"
+        f"left: 12px; padding: 0 6px; color: {TEXT_PRIMARY}; "
+        f"font-weight: bold; font-size: 13px; }}"
     )

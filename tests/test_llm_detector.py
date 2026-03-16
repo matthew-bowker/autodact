@@ -48,7 +48,9 @@ def test_basic_detection():
     flagged = detector.process(doc, lookup)
     assert flagged == []
     assert lookup.lookup("Jane Smith") == "[NAME 1]"
-    assert "[NAME 1]" in doc.lines[0].text
+    # The LLM detector registers findings but does not mutate the document;
+    # replacement is handled by the orchestrator's additive replay.
+    assert doc.lines[0].text == "Jane Smith works at Acme Corp."
 
 
 def test_multiple_detections_per_line():
@@ -65,7 +67,7 @@ def test_multiple_detections_per_line():
     assert lookup.lookup("Manchester") is not None
 
 
-def test_replace_all_across_document():
+def test_register_across_document():
     engine = MockEngine(responses=[
         [{"original": "Jane Smith", "category": "NAME"}],
         [],  # Second line has no new PII
@@ -76,13 +78,15 @@ def test_replace_all_across_document():
     ])
     lookup = LookupTable()
     LLMDetector(engine).process(doc, lookup)
-    assert "Jane Smith" not in doc.lines[1].text
-    assert "[NAME 1]" in doc.lines[1].text
+    # Detector registers but does not mutate; document is unchanged.
+    assert lookup.lookup("Jane Smith") == "[NAME 1]"
+    assert doc.lines[1].text == "We spoke with Jane Smith yesterday."
 
 
 def test_skip_empty_lines():
     engine = MockEngine(responses=[
         [{"original": "Jane", "category": "NAME"}],
+        [],
     ])
     doc = _make_doc(["Jane is here.", "", "Another line."])
     lookup = LookupTable()
@@ -203,13 +207,16 @@ def test_multi_cell_entity_detection():
     LLMDetector(engine).process(doc, lookup)
     # Entity should be registered even though it spans cells
     assert lookup.lookup("Jane Smith") == "[NAME 1]"
-    # Individual cells should be replaced with the tag
-    assert doc.lines[0].cells[0].text == "[NAME 1]"
-    assert doc.lines[0].cells[1].text == "[NAME 1]"
+    # Individual words should be registered as aliases for additive replay
+    assert lookup.lookup("Jane") == "[NAME 1]"
+    assert lookup.lookup("Smith") == "[NAME 1]"
+    # Document is not mutated by the detector
+    assert doc.lines[0].cells[0].text == "Jane"
+    assert doc.lines[0].cells[1].text == "Smith"
 
 
-def test_multi_cell_entity_replaces_across_document():
-    """Multi-cell entity replacement also replaces in other lines."""
+def test_multi_cell_entity_registers_across_document():
+    """Multi-cell entity and its word aliases are registered for replay."""
     engine = MockEngine(responses=[
         [{"original": "Jane Smith", "category": "NAME"}],
         [],
@@ -220,9 +227,11 @@ def test_multi_cell_entity_replaces_across_document():
     ])
     lookup = LookupTable()
     LLMDetector(engine).process(doc, lookup)
-    # Second line has "Jane Smith" in a single cell — should also be replaced
-    assert "Jane Smith" not in doc.lines[1].cells[1].text
-    assert "[NAME 1]" in doc.lines[1].cells[1].text
+    assert lookup.lookup("Jane Smith") == "[NAME 1]"
+    assert lookup.lookup("Jane") == "[NAME 1]"
+    assert lookup.lookup("Smith") == "[NAME 1]"
+    # Document is not mutated — orchestrator handles replacement
+    assert doc.lines[1].cells[1].text == "Jane Smith"
 
 
 def test_prompt_uses_distil_pii_format():
@@ -249,6 +258,79 @@ def test_csv_prompt_includes_headers():
     assert "Notes: some notes" in prompt
 
 
+def test_skip_fully_mapped_row():
+    """Rows where every non-empty cell is in a mapped column are skipped."""
+    engine = MockEngine(responses=[])  # Engine should never be called
+    doc = _make_csv_doc([["Jane Smith", "jane@example.com", "555-1234"]])
+    lookup = LookupTable()
+    # Columns 0, 1, 2 all mapped to PII types
+    mapped = {0: "NAME", 1: "EMAIL", 2: "PHONE"}
+    LLMDetector(engine).process(doc, lookup, mapped_columns=mapped)
+    assert len(engine.prompts) == 0
+
+
+def test_skip_mapped_row_with_empty_cells():
+    """Empty cells don't prevent a fully-mapped row from being skipped."""
+    engine = MockEngine(responses=[])
+    doc = _make_csv_doc([["Jane Smith", "", ""]])
+    lookup = LookupTable()
+    mapped = {0: "NAME", 1: "EMAIL", 2: "PHONE"}
+    LLMDetector(engine).process(doc, lookup, mapped_columns=mapped)
+    assert len(engine.prompts) == 0
+
+
+def test_not_skipped_when_unmapped_column_has_content():
+    """Rows with content in unmapped columns must still go to the LLM."""
+    engine = MockEngine(responses=[
+        [{"original": "42 Oak Road", "category": "LOCATION"}],
+    ])
+    doc = _make_csv_doc([["Jane Smith", "42 Oak Road"]])
+    lookup = LookupTable()
+    # Only column 0 mapped — column 1 is unmapped
+    mapped = {0: "NAME"}
+    LLMDetector(engine).process(doc, lookup, mapped_columns=mapped)
+    assert len(engine.prompts) == 1
+    assert lookup.lookup("42 Oak Road") == "[LOCATION 1]"
+
+
+def test_freetext_column_not_treated_as_covered():
+    """Columns mapped to 'freetext' still need LLM review."""
+    engine = MockEngine(responses=[
+        [{"original": "42 Oak Road", "category": "LOCATION"}],
+    ])
+    doc = _make_csv_doc([["Jane Smith", "Lives at 42 Oak Road"]])
+    lookup = LookupTable()
+    mapped = {0: "NAME", 1: "freetext"}
+    LLMDetector(engine).process(doc, lookup, mapped_columns=mapped)
+    assert len(engine.prompts) == 1
+
+
+def test_prompt_omits_mapped_columns():
+    """The LLM prompt should only contain unmapped cell content."""
+    engine = MockEngine(responses=[[]])
+    doc = _make_csv_doc([["Jane Smith", "jane@example.com", "some notes"]])
+    doc.headers = ["Name", "Email", "Notes"]
+    lookup = LookupTable()
+    mapped = {0: "NAME", 1: "EMAIL"}
+    LLMDetector(engine).process(doc, lookup, mapped_columns=mapped)
+    prompt = engine.prompts[0]
+    # Mapped columns should be excluded from the prompt
+    assert "Jane Smith" not in prompt
+    assert "jane@example.com" not in prompt
+    # Unmapped column should be present with its header
+    assert "Notes: some notes" in prompt
+
+
+def test_no_mapping_sends_full_line():
+    """Without a column mapping, every line goes to the LLM unchanged."""
+    engine = MockEngine(responses=[[]])
+    doc = _make_doc(["Jane Smith works at Acme Corp."])
+    lookup = LookupTable()
+    LLMDetector(engine).process(doc, lookup)
+    assert len(engine.prompts) == 1
+    assert "Jane Smith works at Acme Corp." in engine.prompts[0]
+
+
 def test_txt_prompt_no_headers():
     """Plain text lines should not get header prefixes even if headers exist."""
     engine = MockEngine(responses=[[]])
@@ -259,3 +341,95 @@ def test_txt_prompt_no_headers():
     # Should use plain text, not "Name: Jane Smith works here."
     assert "Jane Smith works here." in engine.prompts[0]
     assert "Name:" not in engine.prompts[0]
+
+
+# ------------------------------------------------------------------
+# Trivial content short-circuit
+# ------------------------------------------------------------------
+
+def test_skip_trivial_placeholder():
+    """Cells with placeholder values like 'N/A' should skip the LLM."""
+    engine = MockEngine(responses=[])
+    doc = _make_csv_doc([["N/A", "pending"]])
+    lookup = LookupTable()
+    LLMDetector(engine).process(doc, lookup)
+    assert len(engine.prompts) == 0
+
+
+def test_skip_trivial_numeric():
+    """Purely numeric cells should skip the LLM."""
+    engine = MockEngine(responses=[])
+    doc = _make_csv_doc([["12345", "42.5"]])
+    lookup = LookupTable()
+    LLMDetector(engine).process(doc, lookup)
+    assert len(engine.prompts) == 0
+
+
+def test_skip_trivial_single_char():
+    """Single-character cells should skip the LLM."""
+    engine = MockEngine(responses=[])
+    doc = _make_csv_doc([["Y", "-"]])
+    lookup = LookupTable()
+    LLMDetector(engine).process(doc, lookup)
+    assert len(engine.prompts) == 0
+
+
+def test_not_skipped_when_one_cell_nontrivial():
+    """Row with a mix of trivial and real content must go to the LLM."""
+    engine = MockEngine(responses=[[]])
+    doc = _make_csv_doc([["N/A", "Lives at 42 Oak Road"]])
+    lookup = LookupTable()
+    LLMDetector(engine).process(doc, lookup)
+    assert len(engine.prompts) == 1
+
+
+def test_trivial_check_with_mapped_columns():
+    """Trivial check applies only to uncovered cells."""
+    engine = MockEngine(responses=[])
+    doc = _make_csv_doc([["Jane Smith", "N/A"]])
+    lookup = LookupTable()
+    # Column 0 is mapped (covered), column 1 is unmapped but trivial
+    mapped = {0: "NAME"}
+    LLMDetector(engine).process(doc, lookup, mapped_columns=mapped)
+    assert len(engine.prompts) == 0
+
+
+# ------------------------------------------------------------------
+# Result caching
+# ------------------------------------------------------------------
+
+def test_cache_identical_freetext():
+    """Rows with the same unmapped content should reuse the LLM result."""
+    engine = MockEngine(responses=[
+        [{"original": "42 Oak Road", "category": "LOCATION"}],
+    ])
+    doc = _make_csv_doc([
+        ["Jane Smith", "42 Oak Road"],
+        ["Bob Jones", "42 Oak Road"],
+    ])
+    doc.headers = ["Name", "Address"]
+    lookup = LookupTable()
+    mapped = {0: "NAME"}
+    LLMDetector(engine).process(doc, lookup, mapped_columns=mapped)
+    # Engine called only once — second row reuses the cached result
+    assert len(engine.prompts) == 1
+    assert lookup.lookup("42 Oak Road") == "[LOCATION 1]"
+
+
+def test_cache_does_not_cross_different_content():
+    """Different freetext content should produce separate LLM calls."""
+    engine = MockEngine(responses=[
+        [{"original": "42 Oak Road", "category": "LOCATION"}],
+        [{"original": "7 Elm Street", "category": "LOCATION"}],
+    ])
+    doc = _make_csv_doc([
+        ["Jane Smith", "42 Oak Road"],
+        ["Bob Jones", "7 Elm Street"],
+    ])
+    doc.headers = ["Name", "Address"]
+    lookup = LookupTable()
+    mapped = {0: "NAME"}
+    LLMDetector(engine).process(doc, lookup, mapped_columns=mapped)
+    assert len(engine.prompts) == 2
+    assert lookup.lookup("42 Oak Road") == "[LOCATION 1]"
+    assert lookup.lookup("7 Elm Street") == "[LOCATION 2]"

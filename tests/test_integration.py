@@ -19,8 +19,8 @@ from src.pipeline.presidio_detector import PresidioDetector
 
 # Skip the entire module if the spaCy model isn't installed (e.g. on CI).
 pytestmark = pytest.mark.skipif(
-    not spacy.util.is_package("en_core_web_lg"),
-    reason="spaCy en_core_web_lg model not installed",
+    not (spacy.util.is_package("en_core_web_md") or spacy.util.is_package("en_core_web_lg")),
+    reason="spaCy en_core_web_md/lg model not installed",
 )
 
 

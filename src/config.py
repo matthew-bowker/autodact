@@ -5,9 +5,15 @@ import platform
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from src.power import default_thread_count
+
 APP_NAME = "Autodact"
 
 ALL_CATEGORIES = ["NAME", "ORG", "LOCATION", "JOBTITLE"]
+
+# spaCy model used for NER.  "md" saves ~185 MB vs "lg" with negligible
+# quality loss — the LLM, name dictionary, and regex layers compensate.
+SPACY_MODEL = "en_core_web_md"
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +112,7 @@ class AppConfig:
     selected_model: str = "standard"
     model_path: str = ""          # non-empty ⇒ custom file overrides selected_model
     window_size: int = 2
-    n_threads: int = 8
+    n_threads: int = field(default_factory=default_thread_count)
     max_line_chars: int = 500
     enabled_categories: list[str] = field(default_factory=lambda: list(ALL_CATEGORIES))
 

@@ -18,7 +18,7 @@ def test_default_config():
     assert config.review_enabled is True
     assert config.model_path == ""
     assert config.window_size == 2
-    assert config.n_threads == 8
+    assert 2 <= config.n_threads <= 8  # default_thread_count(): half cores, clamped
     assert config.max_line_chars == 500
 
 

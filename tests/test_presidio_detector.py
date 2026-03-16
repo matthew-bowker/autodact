@@ -23,7 +23,7 @@ from src.pipeline.presidio_detector import (
 try:
     from src.pipeline.presidio_detector import PresidioDetector, _build_analyzer
 
-    _analyzer = _build_analyzer("en_core_web_lg")
+    _analyzer = _build_analyzer()
     _HAS_SPACY = True
 except (ImportError, OSError):
     _HAS_SPACY = False

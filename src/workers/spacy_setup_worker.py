@@ -65,7 +65,7 @@ def _download_spacy_model(model_name: str, target_dir: Path) -> None:
     logger.info("spaCy model %s installed to %s", model_name, target_dir)
 
 
-def _ensure_spacy_model(model_name: str = "en_core_web_lg") -> None:
+def _ensure_spacy_model(model_name: str = "en_core_web_md") -> None:
     """Download the spaCy model if it is not already installed."""
     import spacy.util
 

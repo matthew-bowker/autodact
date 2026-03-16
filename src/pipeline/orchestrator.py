@@ -77,14 +77,31 @@ class Orchestrator:
         if self._names:
             self._names.process(doc, lookup, on_progress=on_names_progress)
 
+        # Re-parse the file so the LLM sees full unredacted content.
+        # This replaces the previous in-memory snapshot approach — the
+        # file is already on disk, re-reading it is far cheaper than
+        # holding a duplicate of every cell text in RAM.
+        doc = parse_file(file_path)
+
         # Split long lines before LLM pass
         split_long_lines(doc, max_chars=self._max_line_chars)
 
         # Layer 4: LLM pass (contextual detection on sub-lines)
-        flagged = self._llm.process(doc, lookup, on_progress=on_llm_progress)
+        flagged = self._llm.process(
+            doc, lookup,
+            on_progress=on_llm_progress,
+            mapped_columns=column_mapping,
+        )
 
         # Reunify sub-lines for output
         reunify_sublines(doc)
+
+        # Re-parse once more for a clean document, then apply ALL
+        # findings additively.  This reconciles detections from every
+        # layer (rule-based, Presidio, name dictionary, LLM) on the
+        # pristine original text.
+        doc = parse_file(file_path)
+        _apply_all_entries(doc, lookup)
 
         # Post-processing: remove obvious false positives
         validate_and_clean(doc, lookup)
@@ -106,3 +123,15 @@ class Orchestrator:
             output_path=output_path,
             lookup_path=lookup_path,
         )
+
+
+def _apply_all_entries(doc: Document, lookup: LookupTable) -> None:
+    """Apply every lookup entry to *doc*, longest originals first.
+
+    Replacing longer terms first prevents partial-word contamination
+    (e.g. "Jane Smith" must be replaced before the alias "Jane").
+    """
+    entries = lookup.all_entries()
+    entries.sort(key=lambda e: len(e.original_term), reverse=True)
+    for entry in entries:
+        doc.replace_all(entry.original_term, entry.anonymised_term)

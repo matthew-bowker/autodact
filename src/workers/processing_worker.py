@@ -7,6 +7,7 @@ from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 from src.pipeline.document import Document
 from src.pipeline.lookup_table import LookupTable
 from src.pipeline.orchestrator import Orchestrator, PipelineResult
+from src.power import keep_awake, low_priority
 from src.session.session_manager import SessionManager
 from src.session.session_state import FileProgress, SessionState
 
@@ -51,6 +52,10 @@ class ProcessingWorker(QObject):
 
     @pyqtSlot()
     def run(self) -> None:
+        with keep_awake(), low_priority():
+            self._run_inner()
+
+    def _run_inner(self) -> None:
         try:
             # Create session state if not resuming
             if not self._session_state:

@@ -279,7 +279,7 @@ def _is_plausible_phone(s: str) -> bool:
     return True
 
 
-def _build_analyzer(model_name: str = "en_core_web_lg") -> AnalyzerEngine:
+def _build_analyzer(model_name: str = "en_core_web_md") -> AnalyzerEngine:
     """Create a Presidio AnalyzerEngine with spaCy + custom ORG recognizer."""
     provider = NlpEngineProvider(nlp_configuration={
         "nlp_engine_name": "spacy",

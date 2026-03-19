@@ -121,6 +121,62 @@ class ColumnDetector:
                 on_progress(i + 1, total)
 
 
+    def cross_reference(
+        self,
+        doc: Document,
+        lookup: LookupTable,
+        column_mapping: dict[int, str],
+    ) -> None:
+        """Scan freetext/unmapped columns for values found in mapped columns.
+
+        For NAME entries, only replace when the value appears title-cased
+        in the target cell (avoids replacing common-word homonyms like
+        lowercase "rose" in "a beautiful rose garden").
+        """
+        if not column_mapping:
+            return
+
+        # Identify columns that should be scanned (freetext + unmapped).
+        mapped_cols = set(column_mapping.keys())
+        freetext_cols = {
+            i for i, cat in column_mapping.items()
+            if cat.lower() in _SKIP_CATEGORIES
+        }
+        if doc.lines:
+            all_cols = set(range(len(doc.lines[0].cells)))
+            freetext_cols |= all_cols - mapped_cols
+
+        if not freetext_cols:
+            return
+
+        # Collect entries that came from mapped columns (NAME single words).
+        name_entries = [
+            e for e in lookup.all_entries()
+            if e.pii_category == "NAME" and " " not in e.original_term
+        ]
+
+        for line in doc.lines:
+            if line.line_number == 1:
+                continue
+            for cell in line.cells:
+                if cell.col_index not in freetext_cols:
+                    continue
+                for entry in name_entries:
+                    original = entry.original_term
+                    # Only match title-cased occurrences to avoid
+                    # replacing common words like "rose", "May", etc.
+                    if original in cell.text and original[0].isupper():
+                        cell.text = _safe_replace(
+                            cell.text, original, entry.anonymised_term,
+                        )
+
+
+def _safe_replace(text: str, original: str, replacement: str) -> str:
+    """Replace *original* with *replacement*, skipping text inside [brackets]."""
+    from src.pipeline.document import _safe_replace as doc_safe_replace
+    return doc_safe_replace(text, original, replacement)
+
+
 def _register(
     original: str,
     category: str,

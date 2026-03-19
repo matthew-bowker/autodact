@@ -106,6 +106,14 @@ class ProcessingWorker(QObject):
                         self.progress.emit("Presidio pass", c, t),
                         self.stats_updated.emit(self._lookup.category_counts()),
                     ),
+                    on_syntactic_progress=lambda c, t: (
+                        self.progress.emit("Syntactic pass", c, t),
+                        self.stats_updated.emit(self._lookup.category_counts()),
+                    ),
+                    on_custom_list_progress=lambda c, t: (
+                        self.progress.emit("Custom lists", c, t),
+                        self.stats_updated.emit(self._lookup.category_counts()),
+                    ),
                     on_llm_progress=lambda c, t: (
                         self.progress.emit("LLM pass", c, t),
                         self.stats_updated.emit(self._lookup.category_counts()),

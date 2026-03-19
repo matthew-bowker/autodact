@@ -27,6 +27,9 @@ class MockPresidioDetector:
     def pre_detect_orgs(self, doc, lookup):
         pass
 
+    def pre_detect_titled_names(self, doc, lookup):
+        pass
+
     def pre_detect_patterns(self, doc, lookup):
         pass
 

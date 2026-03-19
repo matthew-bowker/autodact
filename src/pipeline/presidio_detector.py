@@ -34,6 +34,20 @@ _COMPANY_RE = re.compile(
 # before Presidio ever sees the text.
 _EMAIL_RE = re.compile(r"\b[\w.-]+@[\w.-]+\.\w{2,}\b")
 
+# Regex for title + name: captures the name portion (not the title itself).
+# Handles both "Dr Smith" (UK) and "Dr. Smith" (US) via optional period.
+_TITLE_NAME_RE = re.compile(
+    r"\b(?:Mr|Mrs|Ms|Miss|Dr|Prof|Professor|Rev|Reverend|"
+    r"Sgt|Sergeant|Lt|Lieutenant|Cpl|Corporal|Capt|Captain|"
+    r"Col|Colonel|Gen|General|Cmdr|Commander|Adm|Admiral|"
+    r"Supt|Superintendent|Insp|Inspector|Det|Detective|"
+    r"Hon|Honourable|Honorable|Sen|Senator|Rep|Representative|"
+    r"Gov|Governor|Amb|Ambassador|Cllr|Councillor|"
+    r"Fr|Father|Sr|Sister|Br|Brother|Dame|Lord|Lady|Sir)"
+    r"\.?\s+"
+    r"((?:(?:[A-Z][a-z]*(?:['\u2019-][A-Z][a-z]+)+|[A-Z][a-z]+)\s*){1,3})",
+)
+
 # Regex patterns for structured PII that Presidio either has no recognizer
 # for or handles unreliably.  Applied as a pre-pass so the text is safely
 # tagged before Presidio's NER can misclassify it.
@@ -313,6 +327,11 @@ class PresidioDetector:
         self._score_threshold = score_threshold
         self._enabled_categories = enabled_categories
 
+    @property
+    def nlp(self):
+        """Expose the underlying spaCy Language object for reuse."""
+        return self._analyzer.nlp_engine.nlp["en"]
+
     def pre_detect_emails(
         self,
         doc: Document,
@@ -359,6 +378,44 @@ class PresidioDetector:
                         doc.source_path.name, line.line_number,
                     )
                     doc.replace_all(original, tag)
+
+    def pre_detect_titled_names(
+        self,
+        doc: Document,
+        lookup: LookupTable,
+    ) -> None:
+        """Heuristic pass: title (Mr/Dr/Prof/…) + name → register as NAME.
+
+        Extracts the name portion only (not the title itself).
+        For multi-word names, individual words are registered as aliases.
+        """
+        for line in doc.lines:
+            for match in _TITLE_NAME_RE.finditer(line.text):
+                name = match.group(1).strip()
+                if not name:
+                    continue
+                if name.startswith("[") and name.endswith("]"):
+                    continue
+
+                existing = lookup.lookup(name)
+                if existing:
+                    doc.replace_all(name, existing)
+                else:
+                    tag = lookup.register(
+                        name, "NAME",
+                        doc.source_path.name, line.line_number,
+                    )
+                    doc.replace_all(name, tag)
+
+                    # Register individual words as aliases for multi-word names.
+                    words = name.split()
+                    if len(words) > 1:
+                        for word in words:
+                            if len(word) >= 3 and not lookup.lookup(word):
+                                lookup.register_alias(
+                                    word, tag, "NAME",
+                                    doc.source_path.name, line.line_number,
+                                )
 
     def pre_detect_patterns(
         self,

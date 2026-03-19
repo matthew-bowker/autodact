@@ -5,13 +5,18 @@ from pathlib import Path
 from typing import Callable
 
 from src.pipeline.column_detector import ColumnDetector
+from src.pipeline.custom_list_detector import CustomListDetector
 from src.pipeline.document import Document, reunify_sublines, split_long_lines
+from src.pipeline.embedding_matcher import EmbeddingMatcher
+from src.pipeline.entropy_detector import EntropyDetector
+from src.pipeline.fuzzy_matcher import FuzzyMatcher
 from src.pipeline.llm_detector import LLMDetector
 from src.pipeline.lookup_table import LookupTable
 from src.pipeline.name_detector import NameDictionaryDetector
 from src.pipeline.parsers import parse_file
 from src.pipeline.post_validator import validate_and_clean
 from src.pipeline.presidio_detector import PresidioDetector
+from src.pipeline.syntactic_detector import SyntacticDetector
 from src.pipeline.writers import write_file
 
 
@@ -30,11 +35,21 @@ class Orchestrator:
         presidio_detector: PresidioDetector,
         llm_detector: LLMDetector,
         name_detector: NameDictionaryDetector | None = None,
+        syntactic_detector: SyntacticDetector | None = None,
+        custom_list_detector: CustomListDetector | None = None,
+        fuzzy_matcher: FuzzyMatcher | None = None,
+        embedding_matcher: EmbeddingMatcher | None = None,
+        entropy_detector: EntropyDetector | None = None,
         max_line_chars: int = 500,
     ) -> None:
         self._presidio = presidio_detector
         self._llm = llm_detector
         self._names = name_detector
+        self._syntactic = syntactic_detector
+        self._custom_lists = custom_list_detector
+        self._fuzzy = fuzzy_matcher
+        self._embedding = embedding_matcher
+        self._entropy = entropy_detector
         self._max_line_chars = max_line_chars
 
     def process_file(
@@ -48,6 +63,8 @@ class Orchestrator:
         on_column_progress: Callable[[int, int], None] | None = None,
         on_presidio_progress: Callable[[int, int], None] | None = None,
         on_names_progress: Callable[[int, int], None] | None = None,
+        on_syntactic_progress: Callable[[int, int], None] | None = None,
+        on_custom_list_progress: Callable[[int, int], None] | None = None,
         on_llm_progress: Callable[[int, int], None] | None = None,
     ) -> PipelineResult:
         doc = parse_file(file_path)
@@ -60,22 +77,45 @@ class Orchestrator:
         # layers can misclassify them (e.g. spaCy tagging "Smith Inc" as PERSON).
         self._presidio.pre_detect_orgs(doc, lookup)
 
+        # Pre-pass: tag names preceded by titles (Mr., Dr., Prof., etc.)
+        self._presidio.pre_detect_titled_names(doc, lookup)
+
         # Layer 1: Column-based detection (CSV/XLSX only)
-        if column_mapping:
-            ColumnDetector().process(
+        column_detector = ColumnDetector() if column_mapping else None
+        if column_detector and column_mapping:
+            column_detector.process(
                 doc, lookup, column_mapping, on_progress=on_column_progress,
             )
+            # Layer 1b: Cross-reference column values into freetext columns
+            column_detector.cross_reference(doc, lookup, column_mapping)
 
         # Pre-pass: tag structured patterns (phones, NI numbers, SSNs,
         # postcodes, IPs, URLs) before Presidio can misclassify them.
         self._presidio.pre_detect_patterns(doc, lookup)
 
+        # Pre-pass: flag high-entropy alphanumeric strings (API keys, tokens)
+        if self._entropy:
+            self._entropy.process(doc, lookup)
+
         # Layer 2: Presidio NER + regex (on all remaining text)
         self._presidio.process(doc, lookup, on_progress=on_presidio_progress)
+
+        # Layer 2.5: Syntactic proper noun detection (catches proper nouns
+        # in subject/object positions that NER missed)
+        if self._syntactic:
+            self._syntactic.process(
+                doc, lookup, on_progress=on_syntactic_progress,
+            )
 
         # Layer 3: Name dictionary (catches names spaCy missed)
         if self._names:
             self._names.process(doc, lookup, on_progress=on_names_progress)
+
+        # Layer 3.5: Custom word lists
+        if self._custom_lists:
+            self._custom_lists.process(
+                doc, lookup, on_progress=on_custom_list_progress,
+            )
 
         # Re-parse the file so the LLM sees full unredacted content.
         # This replaces the previous in-memory snapshot approach — the
@@ -101,6 +141,17 @@ class Orchestrator:
         # layer (rule-based, Presidio, name dictionary, LLM) on the
         # pristine original text.
         doc = parse_file(file_path)
+
+        # Fuzzy matching: find misspellings of known PII terms
+        # (edit-distance + phonetic) before the additive replay.
+        if self._fuzzy:
+            self._fuzzy.process(doc, lookup)
+
+        # Embedding similarity: find semantic relatives of known PII
+        # using spaCy word vectors.
+        if self._embedding:
+            self._embedding.process(doc, lookup)
+
         _apply_all_entries(doc, lookup)
 
         # Post-processing: remove obvious false positives

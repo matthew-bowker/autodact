@@ -125,6 +125,29 @@ class SettingsPanel(QGroupBox):
         cat_row.addStretch()
         layout.addLayout(cat_row)
 
+        # Custom word lists button
+        custom_row = QHBoxLayout()
+        self._custom_lists_btn = QPushButton("Custom Word Lists...")
+        self._custom_lists_btn.setToolTip(
+            "Add your own word lists to always redact specific terms"
+        )
+        self._custom_lists_btn.clicked.connect(self._on_custom_lists)
+        custom_row.addWidget(self._custom_lists_btn)
+        custom_row.addStretch()
+        layout.addLayout(custom_row)
+
+        # Fuzzy matching toggle
+        fuzzy_row = QHBoxLayout()
+        self._fuzzy_check = QCheckBox("Fuzzy matching (experimental)")
+        self._fuzzy_check.setChecked(False)
+        self._fuzzy_check.setToolTip(
+            "Find misspellings of detected PII terms "
+            "(e.g. 'Johnsen' when 'Johnson' is known)"
+        )
+        fuzzy_row.addWidget(self._fuzzy_check)
+        fuzzy_row.addStretch()
+        layout.addLayout(fuzzy_row)
+
         # Window size
         window_row = QHBoxLayout()
         window_row.addWidget(QLabel("Context window:"))
@@ -147,6 +170,7 @@ class SettingsPanel(QGroupBox):
         self._cat_org.toggled.connect(lambda: self.settings_changed.emit())
         self._cat_location.toggled.connect(lambda: self.settings_changed.emit())
         self._cat_jobtitle.toggled.connect(lambda: self.settings_changed.emit())
+        self._fuzzy_check.toggled.connect(lambda: self.settings_changed.emit())
         self._window_size.valueChanged.connect(lambda: self.settings_changed.emit())
 
     # ------------------------------------------------------------------
@@ -166,6 +190,21 @@ class SettingsPanel(QGroupBox):
         )
         if path:
             self._model_path.setText(path)
+            self.settings_changed.emit()
+
+    def _on_custom_lists(self) -> None:
+        from src.config import get_custom_lists_path
+        from src.pipeline.custom_list_detector import (
+            load_custom_lists,
+            save_custom_lists,
+        )
+        from src.ui.custom_lists_dialog import CustomListsDialog
+
+        path = get_custom_lists_path()
+        lists = load_custom_lists(path)
+        dialog = CustomListsDialog(lists, parent=self)
+        if dialog.exec():
+            save_custom_lists(path, dialog.get_lists())
             self.settings_changed.emit()
 
     # ------------------------------------------------------------------
@@ -202,6 +241,7 @@ class SettingsPanel(QGroupBox):
             "model_path": model_path,
             "window_size": self._window_size.value(),
             "enabled_categories": cats,
+            "fuzzy_matching_enabled": self._fuzzy_check.isChecked(),
         }
 
     def apply_config(self, config) -> None:
@@ -228,3 +268,6 @@ class SettingsPanel(QGroupBox):
         self._cat_org.setChecked("ORG" in enabled)
         self._cat_location.setChecked("LOCATION" in enabled)
         self._cat_jobtitle.setChecked("JOBTITLE" in enabled)
+
+        # Fuzzy matching
+        self._fuzzy_check.setChecked(config.fuzzy_matching_enabled)

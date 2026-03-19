@@ -5,7 +5,7 @@ Privacy-first desktop application for anonymising personally identifiable inform
 ## Features
 
 - **Drag-and-drop** CSV, XLSX, DOCX, and TXT files
-- **Three-layer detection**: regex patterns, spaCy NER (via Microsoft Presidio), and a local LLM
+- **Multi-layer detection** pipeline combining regex, NER, dictionaries, syntax analysis, and a local LLM
 - **Human review step** to verify and correct detections before saving
 - **Consistent lookup tables** so the same name always maps to the same tag
 - **Pause and resume** long-running jobs, even after closing the app
@@ -56,14 +56,31 @@ pytest
 
 ## How It Works
 
-Autodact uses a multi-pass pipeline to detect PII:
+Autodact uses a multi-pass pipeline to detect PII. Results from every layer are combined additively on the original text, so nothing detected by one layer is lost by another.
 
-1. **Column detection** — identifies name/email/phone columns in structured data
-2. **Regex pre-pass** — catches emails, phone numbers, postcodes, NI numbers, and other structured patterns
-3. **NER pass** — Microsoft Presidio with spaCy finds names, organisations, locations, and dates
-4. **LLM pass** — a local Distil-PII model (SmolLM2 135M or Llama 3.2 1B) catches context-dependent PII the other layers miss
+### Detection Techniques
 
-Each detected entity gets a consistent replacement tag (e.g. `[NAME 1]`, `[ORG 3]`) tracked in a lookup table, so the same person always maps to the same tag across the entire document.
+| # | Layer | Technique | What it catches |
+|---|-------|-----------|-----------------|
+| 1 | **Regex pre-pass** | Pattern matching with validation (Luhn, date plausibility, phone structure) | Emails, phone numbers, UK postcodes, NI numbers, SSNs, credit cards, IBANs, IPs, URLs, passport numbers, dates |
+| 2 | **Corporate suffix heuristic** | Regex for company suffixes (Ltd, Inc, GmbH, University, Hospital, etc.) | Organisation names that NER often misclassifies as person names |
+| 3 | **Title + next-word heuristic** | "Mr", "Dr", "Prof", etc. (with or without period) followed by 1-3 title-cased words; individual name words registered as aliases | Names preceded by a title that NER may miss (e.g. "Dr Jane Smith", "Mr O'Brien") |
+| 4 | **Column detection** (CSV/XLSX) | User maps column headers to PII categories; adjacent NAME columns are combined; email-local-part name variations generated | Structured tabular PII where the column header tells you the category |
+| 5 | **Column cross-reference** | Known values from mapped columns are searched in freetext/unmapped columns with case-aware matching | Names and other PII that appear outside their labelled column |
+| 6 | **Entropy-based detection** | Shannon entropy calculation on alphanumeric tokens >= 8 chars; requires mixed character types (letters + digits or mixed case); rejects pure-alpha words and programming identifiers | API keys, session tokens, hashes, and random reference IDs (e.g. `sk_live_abc123XYZ`) |
+| 7 | **Presidio NER** | Microsoft Presidio with spaCy `en_core_web_md` — neural named entity recognition with overlap resolution and address reclassification | Person names, locations, organisations, and other entities recognised by the NER model |
+| 8 | **Syntactic proper noun detection** | spaCy dependency parsing identifies proper nouns (`PROPN`) in meaningful syntactic roles (subjects, objects, appositives) and filters against domain exclusions and a 234K common-word dictionary | Proper nouns in sentence context that NER missed (e.g. "I spoke to Johnson") |
+| 9 | **Name dictionary** | 1.7 million first and last names cross-referenced against a common-words dictionary; pair detection for ambiguous words adjacent to high-confidence names | Names that NER and syntax analysis both missed (e.g. uncommon names, names from non-English cultures) |
+| 10 | **Custom word lists** | User-provided word lists tied to a PII category, matched via compiled regex with word boundaries | Domain-specific terms the user always wants redacted (e.g. local place names, internal staff names) |
+| 11 | **LLM contextual pass** | Local Distil-PII model (SmolLM2 135M or Llama 3.2 1B) via llama.cpp; sees surrounding context lines; results cached per unique prompt | Context-dependent PII that rule-based layers miss — addresses, job titles, ages, genders, and ambiguous references |
+| 12 | **Fuzzy matching** (opt-in) | Damerau-Levenshtein edit distance against known lookup entries; conservative thresholds (1 for short words, 2 for longer); common-word guard | Misspellings of already-detected PII (e.g. "Johnsen" when "Johnson" is known) |
+| 13 | **Phonetic matching** (opt-in) | Metaphone phonetic encoding as a fallback when edit-distance fails; groups words that sound alike; length guard within 3 chars | Sound-alike variants that are too different for edit distance (e.g. "Sean"/"Shawn", "Smith"/"Smyth", "Catherine"/"Katherine") |
+| 14 | **Embedding similarity** (opt-in) | Cosine similarity on spaCy `en_core_web_md` 300-dim word vectors (already in memory); threshold >= 0.85; OOV words skipped | Semantic relatives of known PII that other matchers miss |
+| 15 | **Post-validation** | Removes stop words, placeholders, pure-numeric false positives, single characters, and NAME-category role words | False positives from any layer |
+
+### Consistency
+
+Each detected entity gets a consistent replacement tag (e.g. `[NAME 1]`, `[ORG 3]`) tracked in a normalised lookup table. Punctuation variants (O'Connor / OConnor), hyphens (Al-Hassan / Al Hassan), and aliases all map to the same tag across the entire document.
 
 ## Configuration
 
@@ -72,6 +89,8 @@ Settings are accessible from the main window:
 - **Output format**: preserve original format or convert to plain text
 - **Model selection**: Fast (135M params) or Standard (1B params)
 - **Detection categories**: toggle names, organisations, locations, job titles
+- **Custom word lists**: add your own lists of terms to always redact, each tied to a PII category
+- **Fuzzy matching**: opt-in feature to catch misspellings (edit distance), sound-alikes (phonetic), and semantic relatives (embedding similarity) of detected PII
 - **Context window**: number of surrounding lines sent to the LLM for context
 - **Human review**: enable/disable the review step before saving
 

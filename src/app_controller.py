@@ -6,13 +6,18 @@ from pathlib import Path
 from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import QMessageBox
 
-from src.config import AppConfig
+from src.config import AppConfig, get_custom_lists_path
+from src.pipeline.custom_list_detector import CustomListDetector, load_custom_lists
+from src.pipeline.embedding_matcher import EmbeddingMatcher
+from src.pipeline.entropy_detector import EntropyDetector
+from src.pipeline.fuzzy_matcher import FuzzyMatcher
 from src.pipeline.llm_detector import LLMDetector
 from src.pipeline.llm_engine import LLMEngine
 from src.pipeline.lookup_table import LookupTable
 from src.pipeline.name_detector import NameDictionaryDetector
 from src.pipeline.orchestrator import Orchestrator, PipelineResult
 from src.pipeline.presidio_detector import PresidioDetector
+from src.pipeline.syntactic_detector import SyntacticDetector
 from src.session.session_manager import SessionManager
 from src.ui.main_window import MainWindow
 from src.workers.model_load_worker import ModelLoadWorker
@@ -78,6 +83,7 @@ class AppController:
         self._config.model_path = settings["model_path"]
         self._config.window_size = settings["window_size"]
         self._config.enabled_categories = settings["enabled_categories"]
+        self._config.fuzzy_matching_enabled = settings.get("fuzzy_matching_enabled", False)
         self._config.save()
 
     def _on_start(self) -> None:
@@ -216,6 +222,23 @@ class AppController:
     # ------------------------------------------------------------------
 
     def _start_processing(self) -> None:
+        # Build optional detectors.
+        syntactic = SyntacticDetector(self._presidio.nlp)
+
+        custom_lists_data = load_custom_lists(get_custom_lists_path())
+        custom_list_det = (
+            CustomListDetector(custom_lists_data)
+            if custom_lists_data
+            else None
+        )
+
+        fuzzy = FuzzyMatcher() if self._config.fuzzy_matching_enabled else None
+        embedding = (
+            EmbeddingMatcher(self._presidio.nlp)
+            if self._config.fuzzy_matching_enabled
+            else None
+        )
+
         orchestrator = Orchestrator(
             presidio_detector=self._presidio,
             llm_detector=LLMDetector(
@@ -223,6 +246,11 @@ class AppController:
                 categories=self._config.enabled_categories,
             ),
             name_detector=NameDictionaryDetector(),
+            syntactic_detector=syntactic,
+            custom_list_detector=custom_list_det,
+            fuzzy_matcher=fuzzy,
+            embedding_matcher=embedding,
+            entropy_detector=EntropyDetector(),
             max_line_chars=self._config.max_line_chars,
         )
         lookup = LookupTable()
@@ -483,6 +511,26 @@ class AppController:
         self, session_state, lookup: LookupTable, resume_file_index: int
     ) -> None:
         """Resume processing from saved state."""
+        syntactic = (
+            SyntacticDetector(self._presidio.nlp)
+            if self._presidio
+            else None
+        )
+
+        custom_lists_data = load_custom_lists(get_custom_lists_path())
+        custom_list_det = (
+            CustomListDetector(custom_lists_data)
+            if custom_lists_data
+            else None
+        )
+
+        fuzzy = FuzzyMatcher() if self._config.fuzzy_matching_enabled else None
+        embedding = (
+            EmbeddingMatcher(self._presidio.nlp)
+            if self._config.fuzzy_matching_enabled and self._presidio
+            else None
+        )
+
         orchestrator = Orchestrator(
             presidio_detector=self._presidio,
             llm_detector=LLMDetector(
@@ -490,6 +538,11 @@ class AppController:
                 categories=self._config.enabled_categories,
             ),
             name_detector=NameDictionaryDetector(),
+            syntactic_detector=syntactic,
+            custom_list_detector=custom_list_det,
+            fuzzy_matcher=fuzzy,
+            embedding_matcher=embedding,
+            entropy_detector=EntropyDetector(),
             max_line_chars=self._config.max_line_chars,
         )
 

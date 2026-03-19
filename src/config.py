@@ -100,6 +100,10 @@ def get_sessions_dir() -> Path:
     return get_app_data_dir() / "sessions"
 
 
+def get_custom_lists_path() -> Path:
+    return get_app_data_dir() / "custom_lists.json"
+
+
 # ---------------------------------------------------------------------------
 # Application config
 # ---------------------------------------------------------------------------
@@ -115,6 +119,8 @@ class AppConfig:
     n_threads: int = field(default_factory=default_thread_count)
     max_line_chars: int = 500
     enabled_categories: list[str] = field(default_factory=lambda: list(ALL_CATEGORIES))
+    custom_lists_enabled: bool = True
+    fuzzy_matching_enabled: bool = False
 
     def save(self) -> None:
         path = get_config_path()

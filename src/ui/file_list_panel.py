@@ -22,6 +22,9 @@ from src.ui.styles import (
     RADIUS_MD,
     RADIUS_SM,
     TEXT_MUTED,
+    TEXT_PLACEHOLDER,
+    TEXT_PRIMARY,
+    TEXT_SECONDARY,
 )
 
 FORMAT_ICONS = {
@@ -51,7 +54,9 @@ class FileListPanel(QGroupBox):
         self._rows: list[QWidget] = []
 
         self._empty_label = QLabel("No files selected")
-        self._empty_label.setStyleSheet("color: #999; font-style: italic; padding: 4px;")
+        self._empty_label.setStyleSheet(
+            f"color: {TEXT_MUTED}; font-style: italic; padding: 4px;"
+        )
         self._layout.addWidget(self._empty_label)
 
         self._clear_btn = QPushButton("Clear all")
@@ -78,7 +83,9 @@ class FileListPanel(QGroupBox):
         # Header row with clear button
         header = QHBoxLayout()
         count_label = QLabel(f"{len(self._files)} file(s) selected")
-        count_label.setStyleSheet("font-weight: bold; font-size: 12px; color: #333;")
+        count_label.setStyleSheet(
+            f"font-weight: bold; font-size: 12px; color: {TEXT_PRIMARY};"
+        )
         header.addWidget(count_label)
         header.addStretch()
         header.addWidget(self._clear_btn)
@@ -120,7 +127,9 @@ class FileListPanel(QGroupBox):
 
         # File name
         name_label = QLabel(path.name)
-        name_label.setStyleSheet("font-weight: bold; font-size: 12px; color: #222; border: none;")
+        name_label.setStyleSheet(
+            f"font-weight: bold; font-size: 12px; color: {TEXT_PRIMARY}; border: none;"
+        )
         row_layout.addWidget(name_label)
 
         # File size
@@ -129,12 +138,16 @@ class FileListPanel(QGroupBox):
         except OSError:
             size = "?"
         size_label = QLabel(size)
-        size_label.setStyleSheet("color: #888; font-size: 11px; border: none;")
+        size_label.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 11px; border: none;"
+        )
         row_layout.addWidget(size_label)
 
         # Path (truncated)
         dir_label = QLabel(str(path.parent))
-        dir_label.setStyleSheet("color: #aaa; font-size: 10px; border: none;")
+        dir_label.setStyleSheet(
+            f"color: {TEXT_PLACEHOLDER}; font-size: 10px; border: none;"
+        )
         dir_label.setToolTip(str(path))
         row_layout.addWidget(dir_label, stretch=1)
 

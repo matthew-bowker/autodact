@@ -1,0 +1,192 @@
+{
+  "metadata": {
+    "date": "2026-04-28T19:26:43.337672+00:00",
+    "samples": 100,
+    "seed": 42,
+    "dataset": "gretelai/gretel-pii-masking-en-v1",
+    "split": "test",
+    "model": "iiiorg/piiranha-v1-detect-personal-information",
+    "device": "mps",
+    "modes": [
+      "full",
+      "deberta"
+    ],
+    "relaxed_matching": false
+  },
+  "models": [
+    {
+      "model_name": "DeBERTa: piiranha-v1-detect-personal-information (full pipeline)",
+      "total_samples": 100,
+      "total_time": 16.1,
+      "avg_time": 0.16,
+      "overall_precision": 0.6346,
+      "overall_recall": 0.6956,
+      "overall_f1": 0.6637,
+      "per_category": {
+        "DOB": {
+          "precision": 0.6726,
+          "recall": 0.9157,
+          "f1": 0.7755,
+          "tp": 76,
+          "fp": 37,
+          "fn": 7
+        },
+        "EMAIL": {
+          "precision": 0.9259,
+          "recall": 1.0,
+          "f1": 0.9615,
+          "tp": 25,
+          "fp": 2,
+          "fn": 0
+        },
+        "ID": {
+          "precision": 0.866,
+          "recall": 0.4444,
+          "f1": 0.5874,
+          "tp": 84,
+          "fp": 13,
+          "fn": 105
+        },
+        "IP": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 20,
+          "fp": 0,
+          "fn": 0
+        },
+        "LOCATION": {
+          "precision": 0.4079,
+          "recall": 0.9118,
+          "f1": 0.5636,
+          "tp": 31,
+          "fp": 45,
+          "fn": 3
+        },
+        "NAME": {
+          "precision": 0.5053,
+          "recall": 0.7869,
+          "f1": 0.6154,
+          "tp": 48,
+          "fp": 47,
+          "fn": 13
+        },
+        "ORG": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "tp": 0,
+          "fp": 1,
+          "fn": 1
+        },
+        "PHONE": {
+          "precision": 0.5,
+          "recall": 0.9231,
+          "f1": 0.6486,
+          "tp": 12,
+          "fp": 12,
+          "fn": 1
+        },
+        "POSTCODE": {
+          "precision": 0.0833,
+          "recall": 1.0,
+          "f1": 0.1538,
+          "tp": 1,
+          "fp": 11,
+          "fn": 0
+        },
+        "URL": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "tp": 0,
+          "fp": 3,
+          "fn": 0
+        }
+      }
+    },
+    {
+      "model_name": "DeBERTa: piiranha-v1-detect-personal-information (no rules)",
+      "total_samples": 100,
+      "total_time": 8.51,
+      "avg_time": 0.09,
+      "overall_precision": 0.7393,
+      "overall_recall": 0.4848,
+      "overall_f1": 0.5856,
+      "per_category": {
+        "DOB": {
+          "precision": 0.9767,
+          "recall": 0.506,
+          "f1": 0.6667,
+          "tp": 42,
+          "fp": 1,
+          "fn": 41
+        },
+        "EMAIL": {
+          "precision": 1.0,
+          "recall": 0.08,
+          "f1": 0.1481,
+          "tp": 2,
+          "fp": 0,
+          "fn": 23
+        },
+        "ID": {
+          "precision": 0.8396,
+          "recall": 0.4709,
+          "f1": 0.6034,
+          "tp": 89,
+          "fp": 17,
+          "fn": 100
+        },
+        "IP": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 20
+        },
+        "LOCATION": {
+          "precision": 0.5472,
+          "recall": 0.8529,
+          "f1": 0.6667,
+          "tp": 29,
+          "fp": 24,
+          "fn": 5
+        },
+        "NAME": {
+          "precision": 0.5893,
+          "recall": 0.541,
+          "f1": 0.5641,
+          "tp": 33,
+          "fp": 23,
+          "fn": 28
+        },
+        "ORG": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 1
+        },
+        "PHONE": {
+          "precision": 0.9167,
+          "recall": 0.8462,
+          "f1": 0.88,
+          "tp": 11,
+          "fp": 1,
+          "fn": 2
+        },
+        "POSTCODE": {
+          "precision": 0.125,
+          "recall": 1.0,
+          "f1": 0.2222,
+          "tp": 1,
+          "fp": 7,
+          "fn": 0
+        }
+      }
+    }
+  ]
+}

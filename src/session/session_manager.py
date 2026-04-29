@@ -170,7 +170,7 @@ class SessionManager:
 
         # Check for config differences
         config_diffs = []
-        for key in ["enabled_categories", "window_size"]:
+        for key in ["enabled_categories", "device", "fuzzy_matching_enabled"]:
             saved_value = session_state.metadata.config_snapshot.get(key)
             current_value = current_config.get(key)
             if saved_value != current_value:

@@ -5,11 +5,11 @@ Privacy-first desktop application for anonymising personally identifiable inform
 ## Features
 
 - **Drag-and-drop** CSV, XLSX, DOCX, and TXT files
-- **Multi-layer detection** pipeline combining regex, NER, dictionaries, syntax analysis, and a local LLM
+- **Multi-layer detection** pipeline combining regex, NER, dictionaries, syntax analysis, and a local DeBERTa token-classification model
 - **Human review step** to verify and correct detections before saving
 - **Consistent lookup tables** so the same name always maps to the same tag
 - **Pause and resume** long-running jobs, even after closing the app
-- **Fully offline** — models run locally via llama.cpp
+- **Fully offline** — models run locally via PyTorch + transformers
 
 ## System Requirements
 
@@ -27,7 +27,7 @@ Download the latest release from the [Releases](../../releases) page:
 - **macOS**: Download `Autodact.dmg`, open it, and drag Autodact to Applications
 - **Windows**: Download `Autodact-Windows.zip`, extract it, and run `Autodact.exe`
 
-On first launch, the app will download a PII detection model (~540 MB) and a language model (~560 MB). This only happens once.
+On first launch, the app will download a DeBERTa PII detection model (~750 MB) and a spaCy language model (~50 MB). This only happens once.
 
 > **macOS note**: If you see "unidentified developer", right-click the app and choose **Open**.
 
@@ -72,7 +72,7 @@ Autodact uses a multi-pass pipeline to detect PII. Results from every layer are 
 | 8 | **Syntactic proper noun detection** | spaCy dependency parsing identifies proper nouns (`PROPN`) in meaningful syntactic roles (subjects, objects, appositives) and filters against domain exclusions and a 234K common-word dictionary | Proper nouns in sentence context that NER missed (e.g. "I spoke to Johnson") |
 | 9 | **Name dictionary** | 1.7 million first and last names cross-referenced against a common-words dictionary; pair detection for ambiguous words adjacent to high-confidence names | Names that NER and syntax analysis both missed (e.g. uncommon names, names from non-English cultures) |
 | 10 | **Custom word lists** | User-provided word lists tied to a PII category, matched via compiled regex with word boundaries | Domain-specific terms the user always wants redacted (e.g. local place names, internal staff names) |
-| 11 | **LLM contextual pass** | Local Distil-PII model (SmolLM2 135M or Llama 3.2 1B) via llama.cpp; sees surrounding context lines; results cached per unique prompt | Context-dependent PII that rule-based layers miss — addresses, job titles, ages, genders, and ambiguous references |
+| 11 | **DeBERTa contextual pass** | Local mDeBERTa-v3-base token-classification model (Piranha v1) via transformers + PyTorch; runs on Metal/CUDA where available, CPU otherwise; results cached per unique line | Context-dependent PII that rule-based layers miss — names, addresses, job titles, structured IDs, and ambiguous references |
 | 12 | **Fuzzy matching** (opt-in) | Damerau-Levenshtein edit distance against known lookup entries; conservative thresholds (1 for short words, 2 for longer); common-word guard | Misspellings of already-detected PII (e.g. "Johnsen" when "Johnson" is known) |
 | 13 | **Phonetic matching** (opt-in) | Metaphone phonetic encoding as a fallback when edit-distance fails; groups words that sound alike; length guard within 3 chars | Sound-alike variants that are too different for edit distance (e.g. "Sean"/"Shawn", "Smith"/"Smyth", "Catherine"/"Katherine") |
 | 14 | **Embedding similarity** (opt-in) | Cosine similarity on spaCy `en_core_web_md` 300-dim word vectors (already in memory); threshold >= 0.85; OOV words skipped | Semantic relatives of known PII that other matchers miss |
@@ -87,11 +87,12 @@ Each detected entity gets a consistent replacement tag (e.g. `[NAME 1]`, `[ORG 3
 Settings are accessible from the main window:
 
 - **Output format**: preserve original format or convert to plain text
-- **Model selection**: Fast (135M params) or Standard (1B params)
+- **Model selection**: choose a DeBERTa PII model or point at a local snapshot directory
+- **Device**: auto / CPU / MPS (Apple Silicon) / CUDA
 - **Detection categories**: toggle names, organisations, locations, job titles
 - **Custom word lists**: add your own lists of terms to always redact, each tied to a PII category
 - **Fuzzy matching**: opt-in feature to catch misspellings (edit distance), sound-alikes (phonetic), and semantic relatives (embedding similarity) of detected PII
-- **Context window**: number of surrounding lines sent to the LLM for context
+- **Context window**: number of surrounding lines used as context
 - **Human review**: enable/disable the review step before saving
 
 ## License

@@ -1,8 +1,10 @@
 """Integration tests that exercise real Presidio + NameDictionaryDetector.
 
 These tests use the actual spaCy NER model and the generated name data files
-(no mocks), ensuring the full detection pipeline works end-to-end.  The LLM
-layer is still mocked since it requires a model download.
+(no mocks), ensuring the rule-based portion of the pipeline works end-to-end.
+The DeBERTa contextual layer is exercised separately via the orchestrator
+tests (with a mock detector) because loading a real encoder requires a 750
+MB model download.
 """
 
 from __future__ import annotations

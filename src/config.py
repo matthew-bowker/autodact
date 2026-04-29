@@ -5,14 +5,15 @@ import platform
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from src.power import default_thread_count
-
 APP_NAME = "Autodact"
 
-ALL_CATEGORIES = ["NAME", "ORG", "LOCATION", "JOBTITLE"]
+ALL_CATEGORIES = [
+    "NAME", "ORG", "LOCATION", "JOBTITLE",
+    "EMAIL", "PHONE", "ID", "DOB", "POSTCODE", "IP", "URL",
+]
 
 # spaCy model used for NER.  "md" saves ~185 MB vs "lg" with negligible
-# quality loss — the LLM, name dictionary, and regex layers compensate.
+# quality loss — DeBERTa, the name dictionary, and regex layers compensate.
 SPACY_MODEL = "en_core_web_md"
 
 
@@ -24,51 +25,50 @@ SPACY_MODEL = "en_core_web_md"
 class ModelInfo:
     id: str
     name: str
-    repo: str
-    filename: str       # filename inside the HuggingFace repo
-    local_name: str     # filename we store locally (avoids generic "model.gguf")
+    repo: str           # HuggingFace repo id (e.g. "iiiorg/piiranha-v1-...")
     size_hint: str
     description: str
 
 
 AVAILABLE_MODELS: list[ModelInfo] = [
     ModelInfo(
-        id="fast",
-        name="Fast (SmolLM2 135M)",
-        repo="distil-labs/Distil-PII-SmolLM2-135M-Instruct-gguf",
-        filename="model.gguf",
-        local_name="Distil-PII-SmolLM2-135M-Instruct.gguf",
-        size_hint="~540 MB",
-        description="Lightweight and fast. Best for low-end hardware.",
-    ),
-    ModelInfo(
-        id="standard",
-        name="Standard (Llama 1B)",
-        repo="mradermacher/Distil-PII-Llama-3.2-1B-Instruct-GGUF",
-        filename="Distil-PII-Llama-3.2-1B-Instruct.Q4_K_M.gguf",
-        local_name="Distil-PII-Llama-3.2-1B-Instruct.Q4_K_M.gguf",
-        size_hint="~808 MB",
-        description="More accurate. Best for thorough anonymisation.",
+        id="piranha",
+        name="Piranha v1 (mDeBERTa-v3-base)",
+        repo="iiiorg/piiranha-v1-detect-personal-information",
+        size_hint="~750 MB",
+        description="Multilingual DeBERTa-v3 fine-tuned for PII detection.",
     ),
 ]
 
-# Backward-compat aliases (used by a few imports elsewhere).
 DEFAULT_MODEL_REPO = AVAILABLE_MODELS[0].repo
-DEFAULT_MODEL_FILE = AVAILABLE_MODELS[0].local_name
 
 
 def get_model_by_id(model_id: str) -> ModelInfo | None:
-    """Look up a model by its short ID (e.g. ``"standard"``)."""
+    """Look up a model by its short ID (e.g. ``"piranha"``)."""
     for m in AVAILABLE_MODELS:
         if m.id == model_id:
             return m
     return None
 
 
+def model_is_cached(repo: str) -> bool:
+    """True when the HuggingFace repo is fully cached locally."""
+    from huggingface_hub import try_to_load_from_cache
+    from huggingface_hub.constants import HF_HUB_CACHE  # noqa: F401
+
+    # config.json is small and always present — its existence in the cache
+    # is a reliable proxy for "the snapshot is downloaded".
+    cached = try_to_load_from_cache(
+        repo_id=repo,
+        filename="config.json",
+        cache_dir=str(get_models_dir()),
+    )
+    return isinstance(cached, str) and Path(cached).exists()
+
+
 def models_downloaded() -> list[str]:
-    """Return IDs of models whose local file exists in the models dir."""
-    models_dir = get_models_dir()
-    return [m.id for m in AVAILABLE_MODELS if (models_dir / m.local_name).exists()]
+    """Return IDs of models whose weights are cached locally."""
+    return [m.id for m in AVAILABLE_MODELS if model_is_cached(m.repo)]
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +93,7 @@ def get_config_path() -> Path:
 
 
 def get_models_dir() -> Path:
+    """HuggingFace cache directory for downloaded encoder models."""
     return get_app_data_dir() / "models"
 
 
@@ -113,10 +114,9 @@ class AppConfig:
     output_format: str = "preserve"
     lookup_mode: str = "per_file"
     review_enabled: bool = True
-    selected_model: str = "standard"
-    model_path: str = ""          # non-empty ⇒ custom file overrides selected_model
-    window_size: int = 2
-    n_threads: int = field(default_factory=default_thread_count)
+    selected_model: str = "piranha"
+    model_path: str = ""          # non-empty ⇒ local snapshot dir or HF repo override
+    device: str = "auto"          # auto | cpu | mps | cuda
     max_line_chars: int = 500
     enabled_categories: list[str] = field(default_factory=lambda: list(ALL_CATEGORIES))
     custom_lists_enabled: bool = True
@@ -141,10 +141,15 @@ class AppConfig:
                 return cls()
         return cls()
 
-    def effective_model_path(self) -> Path:
+    def effective_model_source(self) -> str:
+        """Return the HF repo id or local path the detector should load.
+
+        Precedence: explicit ``model_path`` (custom override) → selected model
+        from ``AVAILABLE_MODELS`` → fall back to the first available entry.
+        """
         if self.model_path:
-            return Path(self.model_path)
+            return self.model_path
         model = get_model_by_id(self.selected_model)
         if model:
-            return get_models_dir() / model.local_name
-        return get_models_dir() / AVAILABLE_MODELS[0].local_name
+            return model.repo
+        return AVAILABLE_MODELS[0].repo

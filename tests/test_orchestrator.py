@@ -1,20 +1,39 @@
 from pathlib import Path
 
-from src.pipeline.llm_detector import LLMDetector
 from src.pipeline.lookup_table import LookupTable
 from src.pipeline.orchestrator import Orchestrator
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-class MockEngine:
-    def __init__(self, responses: dict[str, list[dict[str, str]]] | None = None):
+class MockDetector:
+    """Stand-in for DebertaDetector.
+
+    Registers entities into the lookup table whenever any keyword from the
+    ``responses`` map appears in a line's text.  Same role the real DeBERTa
+    detector plays in the orchestrator's contextual pass.
+    """
+
+    def __init__(self, responses: dict[str, str] | None = None) -> None:
         self._responses = responses or {}
 
-    def detect_pii(self, user_prompt: str, categories: list[str]) -> list[dict[str, str]]:
-        for key, response in self._responses.items():
-            if key in user_prompt:
-                return response
+    def process(
+        self,
+        doc,
+        lookup,
+        on_progress=None,
+        mapped_columns=None,
+    ) -> list[int]:
+        total = len(doc.lines)
+        for i, line in enumerate(doc.lines):
+            for term, category in self._responses.items():
+                if term in line.text:
+                    lookup.register(
+                        term, category,
+                        doc.source_path.name, line.line_number,
+                    )
+            if on_progress:
+                on_progress(i + 1, total)
         return []
 
 
@@ -41,14 +60,14 @@ class MockPresidioDetector:
 
 
 def test_full_pipeline_txt(tmp_path: Path):
-    engine = MockEngine(responses={
-        "Jane Smith": [{"original": "Jane Smith", "category": "NAME"}],
-        "Bob Jones": [{"original": "Bob Jones", "category": "NAME"}],
-        "Acme Corp": [{"original": "Acme Corp", "category": "ORG"}],
+    detector = MockDetector(responses={
+        "Jane Smith": "NAME",
+        "Bob Jones": "NAME",
+        "Acme Corp": "ORG",
     })
     orchestrator = Orchestrator(
         presidio_detector=MockPresidioDetector(),
-        llm_detector=LLMDetector(engine),
+        deberta_detector=detector,
     )
     lookup = LookupTable()
     result = orchestrator.process_file(
@@ -59,7 +78,7 @@ def test_full_pipeline_txt(tmp_path: Path):
     assert result.lookup_path.exists()
 
     output_text = result.output_path.read_text()
-    # LLM should have caught names
+    # Detector should have caught names
     assert "Jane Smith" not in output_text
     assert "[NAME" in output_text
 
@@ -68,13 +87,13 @@ def test_full_pipeline_txt(tmp_path: Path):
 
 
 def test_full_pipeline_csv(tmp_path: Path):
-    engine = MockEngine(responses={
-        "Jane Smith": [{"original": "Jane Smith", "category": "NAME"}],
-        "Manchester": [{"original": "Manchester", "category": "LOCATION"}],
+    detector = MockDetector(responses={
+        "Jane Smith": "NAME",
+        "Manchester": "LOCATION",
     })
     orchestrator = Orchestrator(
         presidio_detector=MockPresidioDetector(),
-        llm_detector=LLMDetector(engine),
+        deberta_detector=detector,
     )
     lookup = LookupTable()
     result = orchestrator.process_file(
@@ -85,10 +104,10 @@ def test_full_pipeline_csv(tmp_path: Path):
 
 
 def test_pipeline_force_txt_output(tmp_path: Path):
-    engine = MockEngine()
+    detector = MockDetector()
     orchestrator = Orchestrator(
         presidio_detector=MockPresidioDetector(),
-        llm_detector=LLMDetector(engine),
+        deberta_detector=detector,
     )
     lookup = LookupTable()
     result = orchestrator.process_file(
@@ -98,32 +117,30 @@ def test_pipeline_force_txt_output(tmp_path: Path):
 
 
 def test_pipeline_progress_callbacks(tmp_path: Path):
-    engine = MockEngine()
+    detector = MockDetector()
     orchestrator = Orchestrator(
         presidio_detector=MockPresidioDetector(),
-        llm_detector=LLMDetector(engine),
+        deberta_detector=detector,
     )
     lookup = LookupTable()
     presidio_progress: list[tuple[int, int]] = []
-    llm_progress: list[tuple[int, int]] = []
+    deberta_progress: list[tuple[int, int]] = []
     orchestrator.process_file(
         FIXTURES / "sample.txt",
         lookup,
         tmp_path,
         on_presidio_progress=lambda c, t: presidio_progress.append((c, t)),
-        on_llm_progress=lambda c, t: llm_progress.append((c, t)),
+        on_deberta_progress=lambda c, t: deberta_progress.append((c, t)),
     )
     assert len(presidio_progress) > 0
-    assert len(llm_progress) > 0
+    assert len(deberta_progress) > 0
 
 
 def test_pipeline_per_file_lookup_isolation(tmp_path: Path):
-    engine = MockEngine(responses={
-        "Jane Smith": [{"original": "Jane Smith", "category": "NAME"}],
-    })
+    detector = MockDetector(responses={"Jane Smith": "NAME"})
     orchestrator = Orchestrator(
         presidio_detector=MockPresidioDetector(),
-        llm_detector=LLMDetector(engine),
+        deberta_detector=detector,
     )
 
     lookup1 = LookupTable()

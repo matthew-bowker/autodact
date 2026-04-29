@@ -2,25 +2,32 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
-from src.pipeline.llm_engine import LLMEngine
-
 
 class ModelLoadWorker(QObject):
-    finished = pyqtSignal(object)  # LLMEngine instance
+    """Load the DeBERTa PII detector on a background thread.
+
+    Emits ``finished(detector)`` with the loaded ``DebertaDetector`` instance,
+    or ``error(message)`` if loading fails.
+    """
+
+    finished = pyqtSignal(object)
     error = pyqtSignal(str)
 
-    def __init__(self, model_path: str, n_threads: int = 8) -> None:
+    def __init__(self, model_source: str, device: str = "auto") -> None:
         super().__init__()
-        self._model_path = model_path
-        self._n_threads = n_threads
+        self._model_source = model_source
+        self._device = device
 
     @pyqtSlot()
     def run(self) -> None:
         try:
-            engine = LLMEngine(
-                self._model_path,
-                n_threads=self._n_threads,
+            from src.pipeline.deberta_detector import DebertaDetector
+
+            device = None if self._device == "auto" else self._device
+            detector = DebertaDetector(
+                model_name=self._model_source,
+                device=device,
             )
-            self.finished.emit(engine)
+            self.finished.emit(detector)
         except Exception as e:
             self.error.emit(str(e))

@@ -114,8 +114,8 @@ class ProcessingWorker(QObject):
                         self.progress.emit("Custom lists", c, t),
                         self.stats_updated.emit(self._lookup.category_counts()),
                     ),
-                    on_llm_progress=lambda c, t: (
-                        self.progress.emit("LLM pass", c, t),
+                    on_deberta_progress=lambda c, t: (
+                        self.progress.emit("DeBERTa pass", c, t),
                         self.stats_updated.emit(self._lookup.category_counts()),
                     ),
                 )

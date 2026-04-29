@@ -10,7 +10,13 @@ thinc_datas, thinc_binaries, thinc_hiddenimports = collect_all("thinc")
 presidio_datas, presidio_binaries, presidio_hiddenimports = collect_all(
     "presidio_analyzer"
 )
-llama_datas, llama_binaries, llama_hiddenimports = collect_all("llama_cpp")
+transformers_datas, transformers_binaries, transformers_hiddenimports = collect_all(
+    "transformers"
+)
+torch_datas, torch_binaries, torch_hiddenimports = collect_all("torch")
+tokenizers_datas, tokenizers_binaries, tokenizers_hiddenimports = collect_all(
+    "tokenizers"
+)
 
 a = Analysis(
     ["src\\main.py"],
@@ -21,27 +27,38 @@ a = Analysis(
         *spacy_datas,
         *thinc_datas,
         *presidio_datas,
-        *llama_datas,
+        *transformers_datas,
+        *torch_datas,
+        *tokenizers_datas,
     ],
     binaries=[
         *spacy_binaries,
         *thinc_binaries,
         *presidio_binaries,
-        *llama_binaries,
+        *transformers_binaries,
+        *torch_binaries,
+        *tokenizers_binaries,
     ],
     hiddenimports=[
         "PyQt6.QtSvg",
         "PyQt6.QtSvgWidgets",
         "spacy.lang.en",
-        "json_repair",
         "huggingface_hub",
         "openpyxl",
         "docx",
-        "llama_cpp",
+        "transformers",
+        "torch",
+        "tokenizers",
         *spacy_hiddenimports,
         *thinc_hiddenimports,
         *presidio_hiddenimports,
-        *llama_hiddenimports,
+        *transformers_hiddenimports,
+        *torch_hiddenimports,
+        *tokenizers_hiddenimports,
+    ],
+    excludes=[
+        "torchvision",
+        "torchaudio",
     ],
     noarchive=False,
 )

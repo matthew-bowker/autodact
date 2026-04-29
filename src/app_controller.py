@@ -6,13 +6,12 @@ from pathlib import Path
 from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import QMessageBox
 
-from src.config import AppConfig, get_custom_lists_path
+from src.config import AppConfig, get_custom_lists_path, model_is_cached
 from src.pipeline.custom_list_detector import CustomListDetector, load_custom_lists
+from src.pipeline.deberta_detector import DebertaDetector
 from src.pipeline.embedding_matcher import EmbeddingMatcher
 from src.pipeline.entropy_detector import EntropyDetector
 from src.pipeline.fuzzy_matcher import FuzzyMatcher
-from src.pipeline.llm_detector import LLMDetector
-from src.pipeline.llm_engine import LLMEngine
 from src.pipeline.lookup_table import LookupTable
 from src.pipeline.name_detector import NameDictionaryDetector
 from src.pipeline.orchestrator import Orchestrator, PipelineResult
@@ -37,7 +36,7 @@ class AppController:
         self._thread: QThread | None = None
         self._worker: ProcessingWorker | None = None
         self._model_load_worker: ModelLoadWorker | None = None
-        self._llm_engine: LLMEngine | None = None
+        self._deberta: DebertaDetector | None = None
         self._presidio: PresidioDetector | None = None
         self._results: list[PipelineResult] = []
         self._column_mappings: dict[str, dict[int, str]] = {}
@@ -59,9 +58,17 @@ class AppController:
             # Show resume option for most recent session
             self._window.show_resume_option(sessions[0])
 
-        model_path = self._config.effective_model_path()
-        if not model_path.exists():
+        if not self._model_available():
             self._show_download_dialog()
+
+    def _model_available(self) -> bool:
+        """True when the configured model is loadable without a download."""
+        source = self._config.effective_model_source()
+        # Custom local path: the user has already pointed at a snapshot dir.
+        if self._config.model_path:
+            return Path(source).exists()
+        # HF repo: check the local cache.
+        return model_is_cached(source)
 
     def _on_files_dropped(self, paths: list[Path]) -> None:
         self._file_paths = paths
@@ -72,16 +79,17 @@ class AppController:
         self._config.output_format = settings["output_format"]
         self._config.lookup_mode = settings["lookup_mode"]
         self._config.review_enabled = settings["review_enabled"]
-        # Invalidate cached engine when model selection changes.
+        # Invalidate cached detector when model or device changes.
         model_changed = (
             self._config.model_path != settings["model_path"]
             or self._config.selected_model != settings["selected_model"]
+            or self._config.device != settings.get("device", "auto")
         )
         if model_changed:
-            self._llm_engine = None
+            self._deberta = None
         self._config.selected_model = settings["selected_model"]
         self._config.model_path = settings["model_path"]
-        self._config.window_size = settings["window_size"]
+        self._config.device = settings.get("device", "auto")
         self._config.enabled_categories = settings["enabled_categories"]
         self._config.fuzzy_matching_enabled = settings.get("fuzzy_matching_enabled", False)
         self._config.save()
@@ -90,10 +98,9 @@ class AppController:
         if not self._file_paths:
             return
 
-        model_path = self._config.effective_model_path()
-        if not model_path.exists():
+        if not self._model_available():
             self._show_download_dialog()
-            if not model_path.exists():
+            if not self._model_available():
                 return
 
         # Show column mapping dialog for CSV/XLSX files.
@@ -107,12 +114,11 @@ class AppController:
 
         # Ensure Presidio is initialised (loads spaCy model once).
         # Presidio always detects all entity types (emails, phones, IPs, etc.)
-        # regardless of the LLM category checkboxes.
+        # regardless of the DeBERTa category checkboxes.
         if self._presidio is None:
-            self._pending_model_path = str(model_path)
             self._setup_spacy_then_continue()
-        elif self._llm_engine is None:
-            self._load_model_then_process(str(model_path))
+        elif self._deberta is None:
+            self._load_model_then_process()
         else:
             self._start_processing()
 
@@ -166,10 +172,8 @@ class AppController:
 
     def _on_spacy_setup_finished(self, presidio: PresidioDetector) -> None:
         self._presidio = presidio
-        model_path = self._pending_model_path
-        self._pending_model_path = None
-        if self._llm_engine is None:
-            self._load_model_then_process(model_path)
+        if self._deberta is None:
+            self._load_model_then_process()
         else:
             self._start_processing()
 
@@ -181,16 +185,17 @@ class AppController:
         )
 
     # ------------------------------------------------------------------
-    # LLM model loading
+    # DeBERTa model loading
     # ------------------------------------------------------------------
 
-    def _load_model_then_process(self, model_path: str) -> None:
+    def _load_model_then_process(self) -> None:
         self._window.set_processing_state(True)
-        self._window.set_progress("Loading model", 0, 1)
+        self._window.set_progress("Loading DeBERTa model", 0, 1)
 
         self._model_load_thread = QThread()
         self._model_load_worker = ModelLoadWorker(
-            model_path, n_threads=self._config.n_threads
+            self._config.effective_model_source(),
+            device=self._config.device,
         )
         self._model_load_worker.moveToThread(self._model_load_thread)
 
@@ -203,18 +208,18 @@ class AppController:
 
         self._model_load_thread.start()
 
-    def _on_model_loaded(self, engine: LLMEngine) -> None:
-        self._llm_engine = engine
+    def _on_model_loaded(self, detector: DebertaDetector) -> None:
+        self._deberta = detector
 
     def _on_model_thread_finished(self) -> None:
-        if self._llm_engine is not None:
+        if self._deberta is not None:
             self._start_processing()
 
     def _on_model_load_error(self, message: str) -> None:
         self._window.set_processing_state(False)
         QMessageBox.critical(
             self._window, "Model Error",
-            f"Failed to load LLM model:\n{message}"
+            f"Failed to load DeBERTa model:\n{message}"
         )
 
     # ------------------------------------------------------------------
@@ -241,10 +246,7 @@ class AppController:
 
         orchestrator = Orchestrator(
             presidio_detector=self._presidio,
-            llm_detector=LLMDetector(
-                self._llm_engine,
-                categories=self._config.enabled_categories,
-            ),
+            deberta_detector=self._deberta,
             name_detector=NameDictionaryDetector(),
             syntactic_detector=syntactic,
             custom_list_detector=custom_list_det,
@@ -252,6 +254,7 @@ class AppController:
             embedding_matcher=embedding,
             entropy_detector=EntropyDetector(),
             max_line_chars=self._config.max_line_chars,
+            enabled_categories=self._config.enabled_categories,
         )
         lookup = LookupTable()
 
@@ -338,7 +341,7 @@ class AppController:
 
         dialog = ModelDownloadDialog(self._window)
         dialog.exec()
-        # If the user browsed a local file, store it as custom model path.
+        # If the user pointed at a local snapshot directory, store it.
         if dialog.custom_model_path:
             self._config.model_path = dialog.custom_model_path
             self._config.save()
@@ -454,42 +457,39 @@ class AppController:
         # Determine resume point
         resume_file_index = session_state.metadata.current_file_index
 
-        # Ensure model is loaded
-        model_path = self._config.effective_model_path()
-        if not model_path.exists():
+        # Ensure model is available
+        if not self._model_available():
             QMessageBox.critical(
-                self._window, "Model Missing", "LLM model not found."
+                self._window, "Model Missing",
+                "DeBERTa model is not downloaded. Open Settings to download it.",
             )
             return
 
         if self._presidio is None:
-            self._ensure_spacy_model()
             self._presidio = PresidioDetector()
 
-        if self._llm_engine is None:
-            self._load_model_then_resume(
-                str(model_path), session_state, lookup, resume_file_index
-            )
+        if self._deberta is None:
+            self._load_model_then_resume(session_state, lookup, resume_file_index)
         else:
             self._resume_processing(session_state, lookup, resume_file_index)
 
     def _load_model_then_resume(
         self,
-        model_path: str,
         session_state,
         lookup: LookupTable,
         resume_file_index: int,
     ) -> None:
         """Load model then resume processing."""
         self._window.set_processing_state(True)
-        self._window.set_progress("Loading model", 0, 1)
+        self._window.set_progress("Loading DeBERTa model", 0, 1)
 
         # Store resume parameters
         self._resume_params = (session_state, lookup, resume_file_index)
 
         self._model_load_thread = QThread()
         self._model_load_worker = ModelLoadWorker(
-            model_path, n_threads=self._config.n_threads
+            self._config.effective_model_source(),
+            device=self._config.device,
         )
         self._model_load_worker.moveToThread(self._model_load_thread)
 
@@ -501,9 +501,9 @@ class AppController:
 
         self._model_load_thread.start()
 
-    def _on_model_loaded_for_resume(self, engine: LLMEngine) -> None:
+    def _on_model_loaded_for_resume(self, detector: DebertaDetector) -> None:
         """Handle model loaded for resume."""
-        self._llm_engine = engine
+        self._deberta = detector
         session_state, lookup, resume_file_index = self._resume_params
         self._resume_processing(session_state, lookup, resume_file_index)
 
@@ -533,10 +533,7 @@ class AppController:
 
         orchestrator = Orchestrator(
             presidio_detector=self._presidio,
-            llm_detector=LLMDetector(
-                self._llm_engine,
-                categories=self._config.enabled_categories,
-            ),
+            deberta_detector=self._deberta,
             name_detector=NameDictionaryDetector(),
             syntactic_detector=syntactic,
             custom_list_detector=custom_list_det,
@@ -544,6 +541,7 @@ class AppController:
             embedding_matcher=embedding,
             entropy_detector=EntropyDetector(),
             max_line_chars=self._config.max_line_chars,
+            enabled_categories=self._config.enabled_categories,
         )
 
         output_dir = self._file_paths[0].parent

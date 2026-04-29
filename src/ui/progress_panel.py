@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import html
 import time
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel, QProgressBar, QVBoxLayout, QWidget
 
 from src.ui.styles import (
@@ -9,8 +11,27 @@ from src.ui.styles import (
     BORDER_LIGHT,
     PRIMARY_BLUE,
     RADIUS_MD,
+    RADIUS_SM,
     TEXT_SECONDARY,
 )
+
+
+# Per-category accent colors for stat chips.  Anything not listed falls back
+# to the default neutral.
+_CATEGORY_COLORS: dict[str, str] = {
+    "NAME": "#2563eb",       # blue
+    "ORG": "#7c3aed",        # purple
+    "LOCATION": "#0891b2",   # cyan
+    "JOBTITLE": "#9333ea",   # violet
+    "EMAIL": "#0d9488",      # teal
+    "PHONE": "#059669",      # emerald
+    "DOB": "#d97706",        # amber
+    "POSTCODE": "#0284c7",   # sky
+    "ID": "#dc2626",         # red
+    "IP": "#475569",         # slate
+    "URL": "#0369a1",        # blue-600
+}
+_CATEGORY_DEFAULT = "#6b7280"  # neutral grey
 
 
 class ProgressPanel(QWidget):
@@ -37,7 +58,10 @@ class ProgressPanel(QWidget):
         layout.addWidget(self._status_label)
 
         self._stats_label = QLabel("")
-        self._stats_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; font-weight: bold;")
+        self._stats_label.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 12px; margin-top: 2px;"
+        )
+        self._stats_label.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self._stats_label)
 
         self._current_phase: str = ""
@@ -70,8 +94,20 @@ class ProgressPanel(QWidget):
         return _format_duration(remaining)
 
     def set_stats(self, stats: dict[str, int]) -> None:
-        parts = [f"{count} {cat.lower()}s" for cat, count in sorted(stats.items())]
-        self._stats_label.setText(f"Found: {', '.join(parts)}" if parts else "")
+        if not stats:
+            self._stats_label.setText("")
+            return
+        chips: list[str] = []
+        for cat, count in sorted(stats.items(), key=lambda kv: -kv[1]):
+            color = _CATEGORY_COLORS.get(cat, _CATEGORY_DEFAULT)
+            chips.append(
+                f"<span style='background-color:{color}; color:white; "
+                f"padding:1px 6px; border-radius:{RADIUS_SM}px; "
+                f"font-weight:600;'>"
+                f"{html.escape(cat)} {count}"
+                f"</span>"
+            )
+        self._stats_label.setText(" ".join(chips))
 
     def reset(self) -> None:
         self._progress_bar.setValue(0)

@@ -59,21 +59,16 @@ def main():
     # Initialise components
     from src.pipeline.presidio_detector import PresidioDetector
     from src.pipeline.name_detector import NameDictionaryDetector
-    from src.pipeline.llm_engine import LLMEngine
-    from src.pipeline.llm_detector import LLMDetector
+    from src.pipeline.deberta_detector import DebertaDetector
     from src.pipeline.lookup_table import LookupTable
-    from src.pipeline.document import Document, split_long_lines, reunify_sublines
+    from src.pipeline.document import split_long_lines, reunify_sublines
     from src.pipeline.parsers import parse_file
     from src.pipeline.post_validator import validate_and_clean
-    from src.config import get_models_dir, AVAILABLE_MODELS
+    from src.config import DEFAULT_MODEL_REPO
 
     presidio = PresidioDetector()
     name_det = NameDictionaryDetector()
-
-    model_info = next(m for m in AVAILABLE_MODELS if m.id == "standard")
-    model_path = get_models_dir() / model_info.local_name
-    engine = LLMEngine(str(model_path), n_threads=8)
-    llm_det = LLMDetector(engine)
+    deberta_det = DebertaDetector(model_name=DEFAULT_MODEL_REPO)
 
     # Track per-layer NAME detections
     layer_fps = defaultdict(list)   # layer -> list of false positive terms
@@ -117,12 +112,12 @@ def main():
             after_names = {e.original_term for e in lookup.all_entries() if e.pii_category == "NAME"}
             dict_names = after_names - after_presidio
 
-            # Layer 4: LLM
+            # Layer 4: DeBERTa
             split_long_lines(doc, max_chars=500)
-            llm_det.process(doc, lookup)
+            deberta_det.process(doc, lookup)
             reunify_sublines(doc)
-            after_llm = {e.original_term for e in lookup.all_entries() if e.pii_category == "NAME"}
-            llm_names = after_llm - after_names
+            after_deberta = {e.original_term for e in lookup.all_entries() if e.pii_category == "NAME"}
+            deberta_names = after_deberta - after_names
 
             # Post-validation
             validate_and_clean(doc, lookup)
@@ -134,8 +129,8 @@ def main():
                     layer = "presidio"
                 elif term in dict_names:
                     layer = "namedict"
-                elif term in llm_names:
-                    layer = "llm"
+                elif term in deberta_names:
+                    layer = "deberta"
                 else:
                     layer = "unknown"
 
@@ -156,7 +151,7 @@ def main():
     print("NAME DETECTION ATTRIBUTION (100 samples)")
     print("=" * 70)
     
-    for layer in ["presidio", "namedict", "llm", "unknown"]:
+    for layer in ["presidio", "namedict", "deberta", "unknown"]:
         total = layer_counts[layer]
         tp = len(layer_tps[layer])
         fp = len(layer_fps[layer])

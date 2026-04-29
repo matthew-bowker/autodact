@@ -10,7 +10,7 @@ from src.pipeline.document import Document, reunify_sublines, split_long_lines
 from src.pipeline.embedding_matcher import EmbeddingMatcher
 from src.pipeline.entropy_detector import EntropyDetector
 from src.pipeline.fuzzy_matcher import FuzzyMatcher
-from src.pipeline.llm_detector import LLMDetector
+from src.pipeline.deberta_detector import DebertaDetector
 from src.pipeline.lookup_table import LookupTable
 from src.pipeline.name_detector import NameDictionaryDetector
 from src.pipeline.parsers import parse_file
@@ -33,7 +33,7 @@ class Orchestrator:
     def __init__(
         self,
         presidio_detector: PresidioDetector,
-        llm_detector: LLMDetector,
+        deberta_detector: DebertaDetector,
         name_detector: NameDictionaryDetector | None = None,
         syntactic_detector: SyntacticDetector | None = None,
         custom_list_detector: CustomListDetector | None = None,
@@ -41,9 +41,10 @@ class Orchestrator:
         embedding_matcher: EmbeddingMatcher | None = None,
         entropy_detector: EntropyDetector | None = None,
         max_line_chars: int = 500,
+        enabled_categories: list[str] | None = None,
     ) -> None:
         self._presidio = presidio_detector
-        self._llm = llm_detector
+        self._deberta = deberta_detector
         self._names = name_detector
         self._syntactic = syntactic_detector
         self._custom_lists = custom_list_detector
@@ -51,6 +52,9 @@ class Orchestrator:
         self._embedding = embedding_matcher
         self._entropy = entropy_detector
         self._max_line_chars = max_line_chars
+        self._enabled_categories = (
+            set(enabled_categories) if enabled_categories else None
+        )
 
     def process_file(
         self,
@@ -65,7 +69,7 @@ class Orchestrator:
         on_names_progress: Callable[[int, int], None] | None = None,
         on_syntactic_progress: Callable[[int, int], None] | None = None,
         on_custom_list_progress: Callable[[int, int], None] | None = None,
-        on_llm_progress: Callable[[int, int], None] | None = None,
+        on_deberta_progress: Callable[[int, int], None] | None = None,
     ) -> PipelineResult:
         doc = parse_file(file_path)
 
@@ -117,19 +121,20 @@ class Orchestrator:
                 doc, lookup, on_progress=on_custom_list_progress,
             )
 
-        # Re-parse the file so the LLM sees full unredacted content.
+        # Re-parse the file so the encoder sees full unredacted content.
         # This replaces the previous in-memory snapshot approach — the
         # file is already on disk, re-reading it is far cheaper than
         # holding a duplicate of every cell text in RAM.
         doc = parse_file(file_path)
 
-        # Split long lines before LLM pass
+        # Split long lines before the encoder pass (DeBERTa max ctx is 512
+        # tokens; chunking at ~500 chars keeps each line within budget).
         split_long_lines(doc, max_chars=self._max_line_chars)
 
-        # Layer 4: LLM pass (contextual detection on sub-lines)
-        flagged = self._llm.process(
+        # Layer 4: DeBERTa pass (contextual token-classification)
+        flagged = self._deberta.process(
             doc, lookup,
-            on_progress=on_llm_progress,
+            on_progress=on_deberta_progress,
             mapped_columns=column_mapping,
         )
 
@@ -138,7 +143,7 @@ class Orchestrator:
 
         # Re-parse once more for a clean document, then apply ALL
         # findings additively.  This reconciles detections from every
-        # layer (rule-based, Presidio, name dictionary, LLM) on the
+        # layer (rule-based, Presidio, name dictionary, DeBERTa) on the
         # pristine original text.
         doc = parse_file(file_path)
 
@@ -151,6 +156,12 @@ class Orchestrator:
         # using spaCy word vectors.
         if self._embedding:
             self._embedding.process(doc, lookup)
+
+        # Drop categories the user has disabled before applying replacements,
+        # so disabled-category entries are neither replaced in the doc nor
+        # exported to the lookup CSV.
+        if self._enabled_categories is not None:
+            lookup.filter_by_categories(self._enabled_categories)
 
         _apply_all_entries(doc, lookup)
 

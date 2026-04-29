@@ -117,6 +117,16 @@ class LookupTable:
         key = _normalize_key(original)
         self._entries.pop(key, None)
 
+    def filter_by_categories(self, enabled: set[str]) -> list[LookupEntry]:
+        """Drop entries whose category isn't in *enabled*; return removed entries."""
+        removed: list[LookupEntry] = []
+        for key in list(self._entries):
+            entry = self._entries[key]
+            if entry.pii_category not in enabled:
+                removed.append(entry)
+                del self._entries[key]
+        return removed
+
     def __len__(self) -> int:
         return len(self._entries)
 

@@ -96,7 +96,7 @@ class AboutDialog(QDialog):
 
             <h3 style="color: #333; margin-top: 20px;">Technology</h3>
             <p style="font-size: 12px; color: #666;">
-                Autodact uses PyQt6, llama-cpp-python for local LLM inference,
+                Autodact uses PyQt6, transformers + PyTorch for local DeBERTa inference,
                 and Microsoft Presidio for structured PII detection. All models run entirely
                 on your device.
             </p>

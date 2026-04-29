@@ -2,14 +2,14 @@
 
 ## 1. Overview
 
-A lightweight, self-contained desktop application that anonymises personally identifiable information (PII) in documents using a combination of regex pattern matching and a local LLM. Designed to run entirely on consumer hardware with no cloud dependencies. The app produces anonymised output files alongside a researcher lookup table (CSV) mapping original PII terms to their anonymised replacements.
+A lightweight, self-contained desktop application that anonymises personally identifiable information (PII) in documents using a combination of regex pattern matching and a local DeBERTa-v3 token-classification model. Designed to run entirely on consumer hardware with no cloud dependencies. The app produces anonymised output files alongside a researcher lookup table (CSV) mapping original PII terms to their anonymised replacements.
 
 ---
 
 ## 2. Goals & Constraints
 
 - **Fully offline** — no data leaves the user's machine.
-- **Consumer hardware** — must run comfortably on a machine with 8–16 GB RAM. The LLM should be a small quantised model (e.g. 1–3B parameters, GGUF format).
+- **Consumer hardware** — must run comfortably on a machine with 8–16 GB RAM. The encoder is a small token-classification model (~750 MB; DeBERTa-v3-base, ~86M parameters) that runs on CPU, Apple MPS, or CUDA where available.
 - **Cross-platform** — Windows, macOS, Linux. Distributed as a self-contained downloadable package (not via app stores).
 - **Simple UX** — drag-and-drop files, configure minimal settings, get anonymised output.
 
@@ -20,7 +20,7 @@ A lightweight, self-contained desktop application that anonymises personally ide
 | Layer | Technology |
 |---|---|
 | UI framework | PyQt6 / PySide6 |
-| LLM inference | llama-cpp-python |
+| Encoder inference | transformers + PyTorch |
 | Document parsing | openpyxl (xlsx), python-docx (docx), built-in csv/txt |
 | Document output | Same libraries for format-preserving output; csv/txt via built-in |
 | Regex engine | Python `re` standard library |
@@ -82,9 +82,9 @@ Run first on each line before the LLM sees it. Fast, deterministic, and costs ze
 
 The regex layer tags each match immediately, adds it to the lookup table, and performs a find-and-replace-all across the entire remaining document before proceeding.
 
-### 5.2 Layer 2: LLM (Contextual PII)
+### 5.2 Layer 2: DeBERTa Token Classification (Contextual PII)
 
-Handles PII that requires semantic understanding and cannot be reliably caught with patterns.
+Handles PII that requires semantic understanding and cannot be reliably caught with patterns. The model is a fine-tuned mDeBERTa-v3-base encoder (default: ``iiiorg/piiranha-v1-detect-personal-information``) running via HuggingFace ``transformers`` + PyTorch.
 
 | PII Type | Tag Format |
 |---|---|
@@ -92,7 +92,7 @@ Handles PII that requires semantic understanding and cannot be reliably caught w
 | Organisation names | `[ORG N]` |
 | Location names (cities, countries, landmarks, addresses) | `[LOCATION N]` |
 | Job titles tied to identifiable individuals | `[JOBTITLE N]` |
-| Any other contextual identifiers the LLM flags | `[OTHER N]` |
+| Structured IDs the encoder catches (SSN, account numbers, etc.) | `[ID N]` |
 
 ---
 
@@ -116,9 +116,9 @@ Handles PII that requires semantic understanding and cannot be reliably caught w
        │
        ▼
 ┌──────────────────┐
-│  LLM Pass         │  For each line (sliding window):
-│  (contextual PII) │  → detect, tag, add to lookup,
-│                    │    find-and-replace-all in full doc
+│  DeBERTa Pass     │  For each line:
+│  (contextual PII) │  → token-classify, merge BIO spans,
+│                    │    register findings in lookup
 └──────┬───────────┘
        │
        ▼
@@ -138,75 +138,31 @@ Handles PII that requires semantic understanding and cannot be reliably caught w
 
 This is the central design decision. For each line being processed:
 
-1. **Detect** — identify a PII entity (via regex or LLM).
+1. **Detect** — identify a PII entity (via regex, dictionary, or DeBERTa).
 2. **Register** — check the lookup table. If the entity already exists, reuse its tag. If new, assign the next sequential tag (e.g. `[NAME 4]`).
-3. **Replace-all** — immediately replace **every occurrence** of this entity across the **entire document** (all lines, not just the current one). This ensures consistency and means the LLM never sees the same PII term twice in future lines.
-4. **Proceed** — move to the next detection on the current line, then the next line.
+3. **Replace-all** — after every detector layer has run, every lookup entry is replaced across the entire document, longest-first to prevent partial-word contamination.
+4. **Proceed** — orchestrator advances to the next layer.
 
-This replace-all-before-advancing approach is critical: it reduces the LLM's exposure to repeated PII and ensures the document is progressively cleaner as processing advances.
+Findings from every layer are aggregated into the lookup table and only applied once at the end of the pipeline (additive replay). This decouples detection from replacement.
 
-### 6.3 Sliding Window for LLM Context
+### 6.3 DeBERTa Inference
 
-The LLM processes one **focus line** at a time but receives a sliding window for context:
+The encoder processes one **line at a time** through a single forward pass (no autoregressive generation):
 
-```
-[context line n-2]
-[context line n-1]
->>> [FOCUS LINE n] <<<
-[context line n+1]
-[context line n+2]
-```
+- Lines longer than ``max_line_chars`` (default 500 characters) are split via ``split_long_lines`` so each chunk fits comfortably inside DeBERTa's 512-token window. Sub-lines are reunified for output.
+- Identical line texts share a result cache, so duplicate freetext rows in CSV/XLSX cost only one inference.
+- Output is per-token logits; the detector argmaxes to label IDs, applies a confidence threshold (default 0.5), strips B-/I- BIO prefixes, and merges consecutive same-category tokens into character-level spans using offset mapping.
+- Spans shorter than 3 characters or matching nothing in the original line are discarded.
 
-- **Window size**: 2 lines above + 2 lines below (configurable, default 5-line window).
-- **Only the focus line is analysed** for new PII. Context lines are read-only for comprehension.
-- Context lines will already have earlier PII replaced (due to the replace-all-before-advancing approach), which is desirable — it reduces noise and keeps the prompt small.
+### 6.4 Token Classification Output
 
-### 6.4 LLM Prompt Design
+The detector emits ``(original_text, internal_category)`` pairs. Internal categories are mapped from the model's labels via a lookup (e.g. Piranha's ``I-GIVENNAME`` and ``I-SURNAME`` both map to ``NAME``; ``I-ZIPCODE`` to ``POSTCODE``; ``I-CREDITCARDNUMBER`` and ``I-SOCIALNUM`` to ``ID``). Unmapped labels are dropped, so swapping in a different fine-tuned model is just a matter of updating ``_LABEL_TO_CATEGORY``.
 
-The prompt sent per focus line should be minimal and structured to keep the small model on task:
+### 6.5 Error Handling
 
-```
-SYSTEM:
-You are a PII detector. You will be given a focus line surrounded by
-context lines. Identify any person names, organisation names, locations,
-job titles, or other identifying information in the FOCUS LINE only.
-
-Respond ONLY with a JSON array. Each entry should have:
-- "original": the exact text found
-- "category": one of NAME, ORG, LOCATION, JOBTITLE, OTHER
-
-If no PII is found, respond with an empty array: []
-
-USER:
-Context:
-- [already anonymised line n-2]
-- [already anonymised line n-1]
-
-Focus line:
-- [current line to analyse]
-
-Context:
-- [already anonymised line n+1]
-- [already anonymised line n+2]
-```
-
-Expected response:
-
-```json
-[
-  {"original": "Jane Smith", "category": "NAME"},
-  {"original": "Manchester", "category": "LOCATION"}
-]
-```
-
-This keeps the prompt short (well within a 2K context window) and the expected output structured and parseable.
-
-### 6.5 LLM Response Parsing & Error Handling
-
-- Parse the response as JSON. If parsing fails, retry once with the same prompt.
-- If retry fails, log the line number and flag it for manual review.
-- Validate that each `"original"` string actually appears in the focus line (guard against hallucinated entities).
-- Rate of inference: expect ~0.5–2 seconds per line on CPU depending on model size. For a 1,000-line document, this is roughly 8–30 minutes. The UI should show a progress bar with per-line status.
+- If a forward pass raises (e.g. CUDA OOM, MPS backend error), the line is flagged and skipped.
+- The detector is duck-typed to the orchestrator's contextual-detector slot, so a degraded fallback (e.g. running on CPU) can be swapped in without reaching the orchestrator.
+- Rate of inference: ~0.05–0.3 seconds per line on Apple Silicon (MPS) for short documents, ~0.1–0.5s on CPU. A 1,000-line document typically completes in under 5 minutes.
 
 ---
 
@@ -231,7 +187,7 @@ Each PII category has its own independent counter:
 
 ### 7.3 Deduplication
 
-Before assigning a new tag, the engine checks the lookup table for an exact match (case-insensitive). Partial matches (e.g. "Jane" vs "Jane Smith") are not auto-merged — the LLM may surface both, and they receive separate tags. The user can merge them manually in the review step or post-hoc in the CSV.
+Before assigning a new tag, the engine checks the lookup table for an exact match (case-insensitive). Partial matches (e.g. "Jane" vs "Jane Smith") are not auto-merged — the encoder may surface both, and they receive separate tags. The user can merge them manually in the review step or post-hoc in the CSV.
 
 ---
 
@@ -327,29 +283,29 @@ Lookup tables are named: `{original_filename}_lookup.csv` (per-file mode) or `se
 
 | Scenario | Handling |
 |---|---|
-| PII spans multiple cells in a spreadsheet | Unlikely but possible. Each cell is processed independently. If a name is split ("Jane" in A1, "Smith" in B1), the row-concatenation step gives the LLM the full context to detect "Jane Smith", and the replacement maps back to both cells. |
+| PII spans multiple cells in a spreadsheet | Unlikely but possible. Each cell is processed independently. If a name is split ("Jane" in A1, "Smith" in B1), the row-concatenation step gives the encoder the full context to detect "Jane Smith", and the replacement maps back to both cells. |
 | Same name, different people | They receive the same tag. The tool anonymises text, not identity. If differentiation matters, the user handles it in the review step. |
 | Partial matches ("Jane" vs "Jane Smith") | Both are registered separately. No auto-merging. |
-| LLM hallucinates a PII entity not in the text | Validation step checks that `"original"` exists in the focus line. Hallucinated entries are discarded. |
+| Encoder predicts a span that isn't in the line | The detector validates each merged span against the source line and discards mismatches before registering. |
 | Very long lines (e.g. a paragraph in a .txt) | If a line exceeds a configurable character limit (default: 500 chars), split into sub-segments at sentence boundaries. Process each sub-segment as a "line". |
 | Empty lines / non-text content | Skip. Log if relevant. |
 | Password-protected files | Reject with a user-facing error message. |
-| Mixed-language content | The LLM handles this to the extent of its training. Regex patterns may miss non-Latin structured PII. Document this as a known limitation. |
+| Mixed-language content | The mDeBERTa-v3 backbone is multilingual, so detection works across many languages. Regex patterns may still miss non-Latin structured PII — document this as a known limitation. |
 
 ---
 
 ## 12. Performance Estimates
 
-Based on a ~1–3B parameter quantised GGUF model on CPU:
+Based on the mDeBERTa-v3-base encoder running on Apple Silicon (MPS):
 
 | Document Size | Estimated Processing Time |
 |---|---|
-| 100 lines | 1–3 minutes |
-| 500 lines | 4–15 minutes |
-| 1,000 lines | 8–30 minutes |
-| 5,000 lines | 40 minutes – 2.5 hours |
+| 100 lines | < 30 seconds |
+| 500 lines | 1–2 minutes |
+| 1,000 lines | 2–5 minutes |
+| 5,000 lines | 10–25 minutes |
 
-The regex pass is near-instant and runs before the LLM pass. Progress indication is essential for longer documents.
+CPU is roughly 3–5× slower. The regex pass is near-instant and runs before the encoder pass. Progress indication is still helpful for longer documents.
 
 ---
 
@@ -370,7 +326,7 @@ Built via PyInstaller or Nuitka. Single command build per platform via a Makefil
 - Batch processing of entire folders.
 - PDF input support (requires OCR layer).
 - Custom regex pattern editor in the UI.
-- Confidence scoring per LLM detection.
+- Confidence scoring surfaced per detection.
 - Re-identification tool (apply lookup table in reverse to restore original data).
 - App Store distribution (would require migration to Tauri shell with Python sidecar).
-- GPU acceleration for LLM inference (CUDA / Metal).
+- ONNX Runtime export for further CPU speedup and a lighter desktop bundle.

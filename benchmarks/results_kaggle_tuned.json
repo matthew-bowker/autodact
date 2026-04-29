@@ -1,0 +1,70 @@
+{
+  "metadata": {
+    "date": "2026-04-29T10:20:13.903131+00:00",
+    "samples": 500,
+    "seed": 42,
+    "dataset": "Kaggle PII Detection (Learning Agency Lab)",
+    "model": "iiiorg/piiranha-v1-detect-personal-information",
+    "device": "mps"
+  },
+  "overall": {
+    "precision": 0.1468,
+    "recall": 0.8925,
+    "f1": 0.2521,
+    "f5": 0.7467,
+    "tp": 191,
+    "fp": 1110,
+    "fn": 23,
+    "avg_time_per_doc": 0.767
+  },
+  "per_category": {
+    "EMAIL": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f5": 1.0,
+      "tp": 1,
+      "fp": 0,
+      "fn": 0
+    },
+    "ID_NUM": {
+      "precision": 1.0,
+      "recall": 0.0909,
+      "f5": 0.0942,
+      "tp": 1,
+      "fp": 0,
+      "fn": 10
+    },
+    "NAME_STUDENT": {
+      "precision": 0.1467,
+      "recall": 0.9643,
+      "f5": 0.7941,
+      "tp": 189,
+      "fp": 1099,
+      "fn": 7
+    },
+    "PHONE_NUM": {
+      "precision": 0.0,
+      "recall": 0,
+      "f5": 0.0,
+      "tp": 0,
+      "fp": 1,
+      "fn": 0
+    },
+    "STREET_ADDRESS": {
+      "precision": 0.0,
+      "recall": 0,
+      "f5": 0.0,
+      "tp": 0,
+      "fp": 10,
+      "fn": 0
+    },
+    "URL_PERSONAL": {
+      "precision": 0,
+      "recall": 0.0,
+      "f5": 0.0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 6
+    }
+  }
+}

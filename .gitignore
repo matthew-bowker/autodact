@@ -27,3 +27,9 @@ sample_chunky*
 dist/
 build/
 *.dmg
+
+# Kaggle competition data (subject to competition rules — do not commit)
+TheLearningAgencyLab_*.json
+train.json.zip
+test.json.zip
+.claude/

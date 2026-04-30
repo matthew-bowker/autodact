@@ -5,11 +5,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch: {}
 
 jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
         python-version: ["3.12"]
@@ -24,9 +26,9 @@ jobs:
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
-        env:
-          # Disable i8mm on macOS ARM to avoid llama-cpp-python build errors
-          CMAKE_ARGS: "-DGGML_NATIVE=OFF"
+
+      - name: Download spaCy model (for integration tests)
+        run: python -m spacy download en_core_web_md
 
       - name: Run tests
         run: pytest tests/ -v --tb=short

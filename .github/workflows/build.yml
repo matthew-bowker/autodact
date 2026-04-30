@@ -3,6 +3,7 @@ name: Build Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -20,11 +21,12 @@ jobs:
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
-        env:
-          CMAKE_ARGS: "-DGGML_NATIVE=OFF"
+
+      - name: Download spaCy model (bundled into the .app)
+        run: python -m spacy download en_core_web_md
 
       - name: Build with PyInstaller
-        run: pyinstaller autodact_macos.spec
+        run: pyinstaller --clean autodact_macos.spec
 
       - name: Ad-hoc code sign
         run: codesign --force --deep --sign - dist/Autodact.app
@@ -37,7 +39,15 @@ jobs:
             -ov -format UDZO \
             dist/Autodact-macOS.dmg
 
-      - name: Upload release asset
+      - name: Upload artifact (every run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Autodact-macOS
+          path: dist/Autodact-macOS.dmg
+          retention-days: 14
+
+      - name: Upload release asset (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/Autodact-macOS.dmg
@@ -55,13 +65,24 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      - name: Download spaCy model (bundled into the .exe)
+        run: python -m spacy download en_core_web_md
+
       - name: Build with PyInstaller
-        run: pyinstaller autodact_windows.spec
+        run: pyinstaller --clean autodact_windows.spec
 
       - name: Create zip
         run: Compress-Archive -Path dist\Autodact -DestinationPath dist\Autodact-Windows.zip
 
-      - name: Upload release asset
+      - name: Upload artifact (every run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Autodact-Windows
+          path: dist/Autodact-Windows.zip
+          retention-days: 14
+
+      - name: Upload release asset (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/Autodact-Windows.zip
